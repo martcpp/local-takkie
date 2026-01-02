@@ -16,6 +16,16 @@ fn main() {
 
     println!("🔍 Browsing for services...");
 
+      // 1️⃣ UDP socket (for talking)
+    let udp_socket = UdpSocket::bind(("0.0.0.0", port))
+        .expect("Failed to bind UDP socket");
+    udp_socket
+        .set_nonblocking(true)
+        .expect("Failed to set nonblocking");
+
+    println!("🎧 UDP listening on port {}", port);
+
+
     loop {
         // Receive events with a timeout
         while let Ok(event) = receiver.recv_timeout(Duration::from_secs(1)) {
