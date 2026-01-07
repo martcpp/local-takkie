@@ -31,7 +31,7 @@ libmdns = "0.7"
 get_if_addrs = "0.5"
 
 # Make sure to use the most recent version here instead of nn. (at the time of writing: 0.32)
-iroh = { version = "0.95.1", features = ["discovery-local-network"] }
+# iroh = { version = "0.95.1", features = ["discovery-local-network"] }
 mdns-sd = "0.17.1"
 anyhow = "1.0"
 cpal = "0.17.0"
