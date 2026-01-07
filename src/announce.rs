@@ -1,45 +1,96 @@
+use std::{collections::HashMap, net::{IpAddr, Ipv4Addr}};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use std::collections::HashMap;
-use std::net::{Ipv4Addr, IpAddr};
-use std::time::Duration;
-use std::thread::sleep;
 
-fn main() {
-    // Create the mDNS daemon
+
+pub struct Data{
+    pub service_type:String,
+    instance_name: String,
+    ip: IpAddr,
+    host_name: String,
+    port: u16,
+    properties: HashMap<String, String>,
+}
+
+
+impl Data {
+   pub fn new(instant_name: &str, port: u16) -> Self {
+        let service_type = "_walkietalkie._udp.local.".to_string();
+        let instance_name = instant_name.to_string();
+        let ip: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+        let host_name = "mart-device-1.local.".to_string();
+        let port = port;
+        let properties = HashMap::new();
+
+        Data {
+            service_type,
+            instance_name,
+            ip,
+            host_name,
+            port,
+            properties,
+        }
+    }
+
+   pub fn service_info(&self) -> ServiceInfo {
+        ServiceInfo::new(
+            self.service_type.as_str(),
+            self.instance_name.as_str(),
+            self.host_name.as_str(),
+            self.ip,
+            self.port,
+            Some(self.properties.clone()),
+        ).expect("Failed to create service info")
+    }
+
+
+   pub fn announce(&self) {
     let mdns = ServiceDaemon::new().expect("Failed to create daemon");
 
-    // Define service type
-    let service_type = "_walkietalkie._udp.local.";
-    let instance_name = "mart-device-1";
-    let ip: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
-    let host_name = "mart-device-1.local.";
-    let port = 9000;
-    let properties = HashMap::new();
+        // Create service info
+        // let service_info = ServiceInfo::new(
+        //     self.service_type.as_str(),
+        //     self.instance_name.as_str(),
+        //     self.host_name.as_str(),
+        //     self.ip,
+        //     self.port,
+        //     Some(self.properties.clone()),
+        // ).expect("Failed to create service info");
 
-        // service_type,           // Service type
-        // "mart-device-1",        // Device name
-        // "",                     // Hostname (empty = auto)
-        // 9000,                   // Port
-        // Some(txt_records),      // TXT records  
-        // None    
+        mdns.register(self.service_info()).expect("Failed to register service");
 
-    // Create service info
-    let service_info = ServiceInfo::new(
-        service_type,
-        instance_name,
-        host_name,
-        ip,
-        port,
-        Some(properties),
-    ).expect("Failed to create service info");
+        println!("Announcing service as {} on port {}", self.instance_name, self.port);
+        println!("Keep this running...");
 
-    // Register service
-    mdns.register(service_info).expect("Failed to register service");
-
-    println!("✅ Announcing service as mart-device-1 on port 9000");
-    println!("🕒 Keep this running...");
-
-    loop {
-        sleep(Duration::from_secs(60));
-    }
+            loop {
+    std::thread::sleep(std::time::Duration::from_secs(60));
 }
+    }
+
+
+    
+}
+
+// pub fn announce(instant_name: &str, port: u16) {
+//     let service_type = "_walkietalkie._udp.local.";
+//     let instance_name = instant_name;
+//     let ip: IpAddr = Ipv4Addr::new(127, 0, 0, 1).into();
+//     let host_name = "mart-device-1.local.";
+//     let port = port;
+//     let properties = HashMap::new();
+//     let mdns = ServiceDaemon::new().expect("Failed to create daemon");
+
+//     // Create service info
+//     let service_info = ServiceInfo::new(
+//         service_type,
+//         instance_name,
+//         host_name,
+//         ip,
+//         port,
+//         Some(properties),
+//     ).expect("Failed to create service info");
+
+//     mdns.register(service_info).expect("Failed to register service");
+
+//     println!("Announcing service as {} on port {}", instance_name, port);
+//     println!("Keep this running...");
+// }
