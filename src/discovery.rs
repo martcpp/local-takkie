@@ -1,33 +1,29 @@
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use std::thread::spawn;
-use std::time::Duration;
-use std::thread::sleep;
-// mod announce;
-// use crate::announce::Data;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
-pub fn discovery(service_type:  &str) {
+type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
+pub fn discovery(service_type: &str, self_addr: SocketAddr, peers_clone: Peerlist) {
      let mdns = ServiceDaemon::new().expect("Failed to create daemon");
         let receiver = mdns.browse(service_type)
         .expect("Failed to browse for services");
 
-    println!(" Browsing for services...");
+    println!(" Browsing for services... discovery");
 
        spawn(move || {
-        loop {
-            while let Ok(event) = receiver.recv_timeout(Duration::from_secs(1)) {
-                match event {
-                    ServiceEvent::ServiceResolved(info) => {
-                        println!(
-                            "Found: {} at {:?}:{}",
-                            info.get_fullname(),
-                            info.get_addresses(),
-                            info.get_port()
-                        );
+        while let Ok(event) = receiver.recv() {
+            if let ServiceEvent::ServiceResolved(info) = event {
+                if let Some(addr) = info.get_addresses().iter().next() {
+                    let non = addr.to_ip_addr();
+                    let peer = SocketAddr::new(non, info.get_port());
+                    if peer == self_addr {
+                        continue; // Skip self
                     }
-                    _ => {}
+                    peers_clone.lock().unwrap().push(peer);
+                    println!("🔍 Found peer: {}", peer);
                 }
             }
-            sleep(Duration::from_millis(200));
         }
     });
 
