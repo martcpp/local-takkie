@@ -1,6 +1,11 @@
 use std::{collections::HashMap, net::{IpAddr, Ipv4Addr}};
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use mdns_sd::{ServiceDaemon, ServiceInfo,ServiceEvent};
+use std::thread::spawn;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
+
+type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
 
 pub struct Data{
     pub service_type:String,
@@ -50,6 +55,32 @@ impl Data {
         println!("Keep this running... announce");
     }
 
+
+    pub fn discovery(&self,peers_clone: Peerlist) {
+     let mdns = ServiceDaemon::new().expect("Failed to create daemon");
+        let receiver = mdns.browse(&self.service_type)
+        .expect("Failed to browse for services");
+      let self_addr = SocketAddr::new(self.ip, self.port);
+
+    println!(" Browsing for services... discovery");
+
+       spawn(move || {
+        while let Ok(event) = receiver.recv() {
+            if let ServiceEvent::ServiceResolved(info) = event {
+                if let Some(addr) = info.get_addresses().iter().next() {
+                    let non = addr.to_ip_addr();
+                    let peer = SocketAddr::new(non, info.get_port());
+                    if peer == self_addr {
+                        continue; // Skip self
+                    }
+                    peers_clone.lock().unwrap().push(peer);
+                    println!("🔍 Found peer: {}", peer);
+                }
+            }
+        }
+    });
+
+}
 
     
 }

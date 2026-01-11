@@ -9,13 +9,13 @@ path = "src/main.rs"
 
 
 [[bin]]
-name = "dis"
-path = "src/discovery.rs"
+name = "sad"
+path = "src/sad.rs"
 
 
 [[bin]]
-name = "ann"
-path = "src/announce.rs"
+name = "rad"
+path = "src/rad.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -37,3 +37,11 @@ anyhow = "1.0"
 cpal = "0.17.0"
 rand = "0.8"
 socket2 = "0.5"
+
+opus = "0.3"
+aes-gcm = "0.10"
+nnnoiseless = "0.5"
+hound = "3.5"
+chrono = "0.4"
+bincode = "1.3"
+dasp_sample = "0.11"
