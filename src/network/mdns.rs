@@ -3,11 +3,11 @@ use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
 use std::thread::spawn;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use local_ip_address::local_ip; // Add this dependency
+use local_ip_address::local_ip; 
 use log::{info, warn};
 
 type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
-// pub type AudioBuffer = Arc<Mutex<VecDeque<f32>>>;
+
 
 pub struct Data{
     pub service_type: String,
@@ -25,11 +25,11 @@ impl Data {
         
         // Automatically get local IP instead of hardcoding
         let ip = local_ip().unwrap_or_else(|_| {
-            warn!("⚠️ Failed to get local IP, using localhost");
+            warn!("Failed to get local IP, using localhost");
             IpAddr::V4(Ipv4Addr::LOCALHOST)
         });
         
-        info!("📱 Using local IP: {}", ip);
+        info!("Using local IP: {}", ip);
         
         // Generate hostname from instance name
         let host_name = format!("{}.local.", instant_name.replace(" ", "-").to_lowercase());
@@ -59,7 +59,7 @@ impl Data {
     pub fn announce(&self) {
         let mdns = ServiceDaemon::new().expect("Failed to create daemon");
         mdns.register(self.service_info()).expect("Failed to register service");
-        info!("📢 Announcing service as {} on {}:{}", 
+        info!("Announcing service as {} on {}:{}", 
              self.instance_name, self.ip, self.port);
         info!("Keep this running... announce");
     }
@@ -70,7 +70,7 @@ impl Data {
             .expect("Failed to browse for services");
         let self_addr = SocketAddr::new(self.ip, self.port);
 
-        info!("🔍 Browsing for services... discovery");
+        info!("Browsing for services... discovery");
 
         spawn(move || {
             while let Ok(event) = receiver.recv() {
@@ -84,7 +84,7 @@ impl Data {
                         let mut peers = peers_clone.lock().unwrap();
                         if !peers.contains(&peer) {
                             peers.push(peer);
-                            info!("✅ Found new peer: {}", peer);
+                            info!("Found new peer: {}", peer);
                         }
                     }
                 }

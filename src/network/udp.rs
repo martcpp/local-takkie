@@ -40,7 +40,7 @@ pub fn audio_udp_recv(
 
         loop {
             if let Ok((len, from)) = udp_recv.recv_from(&mut buf) {
-                // 👇 IMPORTANT PART
+                // IMPORTANT PART
                 // Convert raw bytes → f32 samples
                 if len % 4 != 0 {
                     debug!("Incomplete audio packet: {} bytes (not multiple of 4)", len);

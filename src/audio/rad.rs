@@ -11,7 +11,7 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
     let config = device.default_output_config().unwrap();
-    info!("🔊 Output config: {:?}", config);
+    info!("Output config: {:?}", config);
     
     let frame_count = std::sync::Arc::new(std::sync::Mutex::new(0usize));
     let frame_count_clone = frame_count.clone();
@@ -35,7 +35,7 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
             }
             
             if *count % 100 == 0 {  // Log every 100 callbacks
-                info!("🔊 Output callback #{}: wrote {} samples, buffer now: {}", count, samples_written, buffer.len());
+                info!("Output callback #{}: wrote {} samples, buffer now: {}", count, samples_written, buffer.len());
             }
         },
         |err| error!("Audio error: {}", err),
