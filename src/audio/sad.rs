@@ -1,12 +1,12 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 use std::net::{UdpSocket, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use crate::network::udp::udp_send_audio;
-use log::{info, error, debug};
 
 pub fn start_mic_capture(
     udp_socket: &UdpSocket,
     peers: Arc<Mutex<Vec<SocketAddr>>>,
+    ptt_enabled: Arc<AtomicBool>,
 ) -> cpal::Stream {
     let host = cpal::default_host();
     let device = host
@@ -14,7 +14,6 @@ pub fn start_mic_capture(
         .expect("No input device found");
 
     let config = device.default_input_config().unwrap();
-    info!("🎤 Mic config: {:?}", config);
 
     let socket = udp_socket.try_clone().unwrap();
 
@@ -28,8 +27,9 @@ pub fn start_mic_capture(
                 let mut count = frame_count_clone.lock().unwrap();
                 *count += 1;
                 
-                if *count % 100 == 0 {  // Log every 100 callbacks to avoid spam
-                    info!("🎙️ Mic callback #{}: {} samples", count, input.len());
+                // Only process audio if PTT is active
+                if !ptt_enabled.load(Ordering::Relaxed) {
+                    return;
                 }
                 
                 // Chunk audio into ~20ms frames to avoid oversized UDP packets
@@ -46,15 +46,12 @@ pub fn start_mic_capture(
                     };
                     // Use live peers discovered so far
                     let peers_list = peers.lock().unwrap().clone();
-                    if *count % 100 == 0 {
-                        debug!("Mic chunk: {} bytes → {} peers", audio_bytes.len(), peers_list.len());
-                    }
                     if !peers_list.is_empty() {
                         udp_send_audio(&socket, audio_bytes, &peers_list);
                     }
                 }
             },
-            |err| error!("Mic error: {}", err),
+            |_err| {},
             None,
         )
         .unwrap()
