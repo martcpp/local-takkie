@@ -262,7 +262,7 @@ fn render_ptt_status(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(ptt_paragraph, status_chunks[0]);
 
     // Audio level gauge (simulated)
-    let audio_level = if ptt_active { 75 } else { 0 };
+    let audio_level = if ptt_active { 100 } else { 0 };
     let gauge = Gauge::default()
         .block(Block::default().title("🔊 Audio Level").borders(Borders::ALL))
         .gauge_style(Style::default().fg(if ptt_active { Color::Green } else { Color::Gray }))
