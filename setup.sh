@@ -14,7 +14,12 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
         libopus-dev \
         libglib2.0-dev \
         libatk1.0-dev \
-        libgtk-3-dev
+        libgtk-3-dev \
+        libasound2-dev \
+        webkit2gtk-4.1 \
+        javascriptcoregtk-4.1\
+        libsoup-3.0\
+
     cargo run --bin vl mac03 9002
 
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
