@@ -2,7 +2,7 @@
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Running on macOS"
-    brew install cmake opus
+    brew install cmake opus pkg-config
     cargo run --bin vl mac03 9002
 
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
