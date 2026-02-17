@@ -30,4 +30,3 @@ else
     echo "Unsupported OS: $OSTYPE"
     exit 1
 fi
-
