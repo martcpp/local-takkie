@@ -19,7 +19,7 @@ pub fn start_mic_capture(
     let socket = udp_socket.try_clone().unwrap();
 
     let channels = config.channels() as usize;
-    let sample_rate = config.sample_rate().0;
+    let sample_rate = config.sample_rate();
 
     // Create Opus encoder outside the callback so it's reused across frames
     let opus_channels = if channels == 1 { Channels::Mono } else { Channels::Stereo };

@@ -12,7 +12,7 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
     info!("Output config: {:?}", config);
 
     let channels = config.channels() as usize;
-    let sample_rate = config.sample_rate().0;
+    let sample_rate = config.sample_rate();
 
     let opus_channels = if channels == 1 { Channels::Mono } else { Channels::Stereo };
     let decoder = Arc::new(Mutex::new(
