@@ -15,7 +15,7 @@ fn run_command(command: &str, args: &[&str]) {
 
 fn main() {
     // Sequentially run cargo commands
-    run_command("chmod", &["+x", "setup.sh"]);
+    // run_command("chmod", &["+x", "setup.sh"]);
     run_command("cargo", &["test"]);
     run_command("cargo", &["clippy","--","-D","warnings"]);
     run_command("cargo", &["fmt"]);
