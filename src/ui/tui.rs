@@ -1,22 +1,22 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Wrap},
-    Frame, Terminal,
 };
 use std::{
     io,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -54,7 +54,11 @@ impl AppState {
 
     pub fn add_event(&self, event: String) {
         let mut events = self.events.lock().unwrap();
-        events.push(format!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), event));
+        events.push(format!(
+            "[{}] {}",
+            chrono::Local::now().format("%H:%M:%S"),
+            event
+        ));
         if events.len() > 100 {
             events.remove(0);
         }
@@ -100,29 +104,29 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, state: Arc<AppState>) -> io::
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
 
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                        state.running.store(false, Ordering::Relaxed);
-                        return Ok(());
-                    }
-                    KeyCode::Char('t') | KeyCode::Char('T') => {
-                        // Handle push-to-talk: press activates, release deactivates
-                        match key.kind {
-                            KeyEventKind::Press => {
-                                state.ptt_active.store(true, Ordering::Relaxed);
-                                state.add_event("🔴 PTT ACTIVE - Transmitting".to_string());
-                            }
-                            KeyEventKind::Release => {
-                                state.ptt_active.store(false, Ordering::Relaxed);
-                                state.add_event("⚫ PTT OFF - Not transmitting".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+        if event::poll(timeout)?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                    state.running.store(false, Ordering::Relaxed);
+                    return Ok(());
                 }
+                KeyCode::Char('t') | KeyCode::Char('T') => {
+                    // Handle push-to-talk: press activates, release deactivates
+                    match key.kind {
+                        KeyEventKind::Press => {
+                            state.ptt_active.store(true, Ordering::Relaxed);
+                            state.add_event("🔴 PTT ACTIVE - Transmitting".to_string());
+                        }
+                        KeyEventKind::Release => {
+                            state.ptt_active.store(false, Ordering::Relaxed);
+                            state.add_event("⚫ PTT OFF - Not transmitting".to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -136,9 +140,9 @@ fn ui(f: &mut Frame, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(10),    // Main content
-            Constraint::Length(3),  // Footer
+            Constraint::Length(3), // Header
+            Constraint::Min(10),   // Main content
+            Constraint::Length(3), // Footer
         ])
         .split(f.area());
 
@@ -148,10 +152,7 @@ fn ui(f: &mut Frame, state: &AppState) {
     // Main content area
     let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(60),
-            Constraint::Percentage(40),
-        ])
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(chunks[1]);
 
     // Left side: Status and Peers
@@ -186,7 +187,11 @@ fn render_header(f: &mut Frame, area: Rect, state: &AppState) {
             .add_modifier(Modifier::BOLD),
     )
     .alignment(Alignment::Center)
-    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan)),
+    );
     f.render_widget(title, area);
 }
 
@@ -197,7 +202,12 @@ fn render_connection_status(f: &mut Frame, area: Rect, state: &AppState) {
     let status_text = vec![
         Line::from(vec![
             Span::styled("Instance: ", Style::default().fg(Color::Gray)),
-            Span::styled(&state.instance_name, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &state.instance_name,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Local IP: ", Style::default().fg(Color::Gray)),
@@ -212,14 +222,22 @@ fn render_connection_status(f: &mut Frame, area: Rect, state: &AppState) {
             Span::styled("Connected Peers: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 peers_count.to_string(),
-                Style::default().fg(if peers_count > 0 { Color::Green } else { Color::Red }),
+                Style::default().fg(if peers_count > 0 {
+                    Color::Green
+                } else {
+                    Color::Red
+                }),
             ),
         ]),
         Line::from(vec![
             Span::styled("Buffer Size: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 format!("{} samples", buffer_size),
-                Style::default().fg(if buffer_size > 0 { Color::Green } else { Color::Gray }),
+                Style::default().fg(if buffer_size > 0 {
+                    Color::Green
+                } else {
+                    Color::Gray
+                }),
             ),
         ]),
     ];
@@ -251,21 +269,37 @@ fn render_ptt_status(f: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let ptt_paragraph = Paragraph::new(ptt_text)
-        .style(Style::default().fg(if ptt_active { Color::Red } else { Color::Gray }).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(if ptt_active { Color::Red } else { Color::Gray })
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(
             Block::default()
                 .title("🎤 Push-to-Talk")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(if ptt_active { Color::Red } else { Color::White })),
+                .border_style(Style::default().fg(if ptt_active {
+                    Color::Red
+                } else {
+                    Color::White
+                })),
         );
     f.render_widget(ptt_paragraph, status_chunks[0]);
 
     // Audio level gauge (simulated)
     let audio_level = if ptt_active { 100 } else { 0 };
     let gauge = Gauge::default()
-        .block(Block::default().title("🔊 Audio Level").borders(Borders::ALL))
-        .gauge_style(Style::default().fg(if ptt_active { Color::Green } else { Color::Gray }))
+        .block(
+            Block::default()
+                .title("🔊 Audio Level")
+                .borders(Borders::ALL),
+        )
+        .gauge_style(Style::default().fg(if ptt_active {
+            Color::Green
+        } else {
+            Color::Gray
+        }))
         .percent(audio_level);
     f.render_widget(gauge, status_chunks[1]);
 }

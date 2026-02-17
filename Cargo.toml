@@ -8,14 +8,14 @@ name = "vl"
 path = "src/main.rs"
 
 
-[[bin]]
-name = "sad"
-path = "src/sad.rs"
+# [[bin]]
+# name = "sad"
+# path = "src/sad.rs"
 
 
-[[bin]]
-name = "rad"
-path = "src/rad.rs"
+# [[bin]]
+# name = "rad"
+# path = "src/rad.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
