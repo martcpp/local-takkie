@@ -13,7 +13,8 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
         cmake \
         libopus-dev \
         libglib2.0-dev \
-        libatk1.0-dev
+        libatk1.0-dev \
+        libgtk-3-dev
     cargo run --bin vl mac03 9002
 
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
