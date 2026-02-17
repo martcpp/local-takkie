@@ -1,4 +1,8 @@
 use cpal::traits::StreamTrait;
+
+use env_logger::Env;
+use log::{debug, error, info, warn};
+
 use std::env;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
@@ -12,7 +16,10 @@ mod ui;
 use audio::rad::start_audio_output;
 use audio::sad::start_mic_capture;
 use network::mdns::Data;
+
 use network::udp::{AudioBuffer, audio_udp_recv};
+
+
 use ui::tui::{AppState, run_tui};
 
 type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
