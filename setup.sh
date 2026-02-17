@@ -1,4 +1,5 @@
 #!/bin/bash
+
 if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Running on macOS"
     brew install cmake opus
@@ -16,7 +17,7 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
 
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
     echo "Running on Windows"
-    cargo run --bin vl win03 9002
+    cargo run --bin vl mac03 9002
 
 else
     echo "Unsupported OS: $OSTYPE"
