@@ -1,8 +1,11 @@
-use cpal::traits::{DeviceTrait, HostTrait};
-use std::net::{UdpSocket, SocketAddr};
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use opus::{Encoder, Application, Channels};
 use crate::network::udp::udp_send_audio;
+use cpal::traits::{DeviceTrait, HostTrait};
+use opus::{Application, Channels, Encoder};
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 pub fn start_mic_capture(
     udp_socket: &UdpSocket,
@@ -10,9 +13,7 @@ pub fn start_mic_capture(
     ptt_enabled: Arc<AtomicBool>,
 ) -> cpal::Stream {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .expect("No input device found");
+    let device = host.default_input_device().expect("No input device found");
 
     let config = device.default_input_config().unwrap();
 
@@ -22,7 +23,11 @@ pub fn start_mic_capture(
     let sample_rate = config.sample_rate();
 
     // Create Opus encoder outside the callback so it's reused across frames
-    let opus_channels = if channels == 1 { Channels::Mono } else { Channels::Stereo };
+    let opus_channels = if channels == 1 {
+        Channels::Mono
+    } else {
+        Channels::Stereo
+    };
     let encoder = Arc::new(Mutex::new(
         Encoder::new(sample_rate, opus_channels, Application::Voip)
             .expect("Failed to create Opus encoder"),
