@@ -6,7 +6,13 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     echo "Running on Linux"
-    cargo run --bin vl linux03 9002
+    sudo apt-get update
+    sudo apt-get install -y \
+        pkg-config \
+        cmake \
+        libopus-dev \
+        libglib2.0-dev
+    cargo run --bin vl mac03 9002
 
 elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
     echo "Running on Windows"
