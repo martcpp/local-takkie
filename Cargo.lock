@@ -4642,6 +4642,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rubato"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5d18b486e7d29a408ef3f825bc1327d8f87af091c987ca2f5b734625940e234"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "realfft",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6228,6 +6240,7 @@ dependencies = [
  "opus",
  "rand 0.8.5",
  "ratatui",
+ "rubato",
  "serde",
  "socket2 0.5.10",
  "sys-info",
