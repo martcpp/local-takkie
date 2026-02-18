@@ -8,14 +8,50 @@ use std::{
 
 pub type AudioBuffer = Arc<Mutex<VecDeque<u8>>>; // now holds raw Opus packets
 
+const OPUS_SAMPLE_RATES: [u32; 5] = [48000, 24000, 16000, 12000, 8000];
+
+fn pick_opus_output_rate(device: &cpal::Device, config: &cpal::SupportedStreamConfig) -> u32 {
+    let default_rate = config.sample_rate();
+    if OPUS_SAMPLE_RATES.contains(&default_rate) {
+        return default_rate;
+    }
+
+    let target_channels = config.channels();
+    let target_format = config.sample_format();
+    let ranges: Vec<_> = device
+        .supported_output_configs()
+        .map(|iter| iter.collect())
+        .unwrap_or_default();
+
+    for rate in OPUS_SAMPLE_RATES {
+        let supported = ranges.iter().any(|range| {
+            range.channels() == target_channels
+                && range.sample_format() == target_format
+                && rate >= range.min_sample_rate()
+                && rate <= range.max_sample_rate()
+        });
+        if supported {
+            return rate;
+        }
+    }
+
+    error!(
+        "No Opus-compatible output sample rate supported; falling back to 48000 Hz"
+    );
+    48000
+}
+
 pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
     let config = device.default_output_config().unwrap();
+    let opus_rate = pick_opus_output_rate(&device, &config);
+    let mut stream_config: cpal::StreamConfig = config.clone().into();
+    stream_config.sample_rate = opus_rate;
     info!("Output config: {:?}", config);
 
     let channels = config.channels() as usize;
-    let sample_rate = config.sample_rate();
+    let sample_rate = opus_rate;
 
     let opus_channels = if channels == 1 {
         Channels::Mono
@@ -37,7 +73,7 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
 
     device
         .build_output_stream(
-            &config.into(),
+            &stream_config,
             move |output: &mut [f32], _| {
                 let mut count = frame_count_clone.lock().unwrap();
                 *count += 1;
