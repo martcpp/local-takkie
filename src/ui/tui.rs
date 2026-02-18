@@ -94,8 +94,12 @@ pub fn run_tui(state: Arc<AppState>) -> Result<(), io::Error> {
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, state: Arc<AppState>) -> io::Result<()> {
-    let tick_rate = Duration::from_millis(100);
+    let tick_rate = Duration::from_millis(50);
     let mut last_tick = Instant::now();
+    
+    // Track if spacebar is currently being held down
+    let mut spacebar_held = false;
+    let mut last_spacebar_press = Instant::now();
 
     loop {
         terminal.draw(|f| ui(f, &state))?;
@@ -104,30 +108,41 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, state: Arc<AppState>) -> io::
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
 
-        if event::poll(timeout)?
-            && let Event::Key(key) = event::read()?
-        {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                    state.running.store(false, Ordering::Relaxed);
-                    return Ok(());
-                }
-                KeyCode::Char('t') | KeyCode::Char('T') => {
-                    // Handle push-to-talk: press activates, release deactivates
-                    match key.kind {
-                        KeyEventKind::Press => {
-                            state.ptt_active.store(true, Ordering::Relaxed);
-                            state.add_event("🔴 PTT ACTIVE - Transmitting".to_string());
-                        }
-                        KeyEventKind::Release => {
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                        state.running.store(false, Ordering::Relaxed);
+                        return Ok(());
+                    }
+                    KeyCode::Char(' ') => {
+                        // Only respond to Press events (Release is unreliable on Linux/macOS)
+                        if key.kind == KeyEventKind::Press {
+                            spacebar_held = true;
+                            last_spacebar_press = Instant::now();
+                            
+                            if !state.ptt_active.load(Ordering::Relaxed) {
+                                state.ptt_active.store(true, Ordering::Relaxed);
+                                state.add_event("🔴 PTT ACTIVE - Transmitting (hold spacebar)".to_string());
+                            }
+                        } else if key.kind == KeyEventKind::Release {
+                            // This will work on Windows, but not Linux/macOS
+                            spacebar_held = false;
                             state.ptt_active.store(false, Ordering::Relaxed);
                             state.add_event("⚫ PTT OFF - Not transmitting".to_string());
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
-                _ => {}
             }
+        }
+
+        // Auto-deactivate PTT if no spacebar press in the last 200ms
+        // This simulates "release" detection for Linux/macOS
+        if spacebar_held && last_spacebar_press.elapsed() > Duration::from_millis(200) {
+            spacebar_held = false;
+            state.ptt_active.store(false, Ordering::Relaxed);
+            state.add_event("⚫ PTT OFF - Auto-deactivated".to_string());
         }
 
         if last_tick.elapsed() >= tick_rate {
@@ -277,7 +292,7 @@ fn render_ptt_status(f: &mut Frame, area: Rect, state: &AppState) {
         .alignment(Alignment::Center)
         .block(
             Block::default()
-                .title("🎤 Push-to-Talk")
+                .title("🎤 Push-to-Talk (Hold SPACE)")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(if ptt_active {
                     Color::Red
@@ -346,7 +361,7 @@ fn render_events(f: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_footer(f: &mut Frame, area: Rect) {
-    let footer_text = Paragraph::new("Press and HOLD 'T' to transmit | 'Q' or ESC to quit")
+    let footer_text = Paragraph::new("HOLD SPACEBAR to transmit | 'Q' or ESC to quit")
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
