@@ -367,3 +367,209 @@ fn render_footer(f: &mut Frame, area: Rect) {
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer_text, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_state_creation() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test-instance".to_string(),
+            "192.168.1.100".to_string(),
+            8080,
+            peers,
+            buffer_size,
+        );
+        
+        assert_eq!(state.instance_name, "test-instance");
+        assert_eq!(state.local_ip, "192.168.1.100");
+        assert_eq!(state.port, 8080);
+        assert_eq!(state.ptt_active.load(Ordering::Relaxed), false);
+        assert_eq!(state.running.load(Ordering::Relaxed), true);
+    }
+
+    #[test]
+    fn test_app_state_add_event() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers,
+            buffer_size,
+        );
+        
+        state.add_event("Test event 1".to_string());
+        state.add_event("Test event 2".to_string());
+        
+        let events = state.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events[0].contains("Test event 1"));
+        assert!(events[1].contains("Test event 2"));
+    }
+
+    #[test]
+    fn test_app_state_event_limit() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers,
+            buffer_size,
+        );
+        
+        // Add 150 events (more than the 100 limit)
+        for i in 0..150 {
+            state.add_event(format!("Event {}", i));
+        }
+        
+        let events = state.events.lock().unwrap();
+        assert_eq!(events.len(), 100);
+        // The oldest events should be removed
+        assert!(events[0].contains("Event 50"));
+    }
+
+    #[test]
+    fn test_ptt_activation() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers,
+            buffer_size,
+        );
+        
+        assert_eq!(state.ptt_active.load(Ordering::Relaxed), false);
+        
+        state.ptt_active.store(true, Ordering::Relaxed);
+        assert_eq!(state.ptt_active.load(Ordering::Relaxed), true);
+        
+        state.ptt_active.store(false, Ordering::Relaxed);
+        assert_eq!(state.ptt_active.load(Ordering::Relaxed), false);
+    }
+
+    #[test]
+    fn test_running_flag() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers,
+            buffer_size,
+        );
+        
+        assert_eq!(state.running.load(Ordering::Relaxed), true);
+        
+        state.running.store(false, Ordering::Relaxed);
+        assert_eq!(state.running.load(Ordering::Relaxed), false);
+    }
+
+    #[test]
+    fn test_peers_management() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers.clone(),
+            buffer_size,
+        );
+        
+        {
+            let mut p = state.peers.lock().unwrap();
+            p.push("192.168.1.100:9090".parse().unwrap());
+            p.push("192.168.1.101:9090".parse().unwrap());
+        }
+        
+        let p = state.peers.lock().unwrap();
+        assert_eq!(p.len(), 2);
+    }
+
+    #[test]
+    fn test_buffer_size_tracking() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers,
+            buffer_size.clone(),
+        );
+        
+        {
+            *state.buffer_size.lock().unwrap() = 2048;
+        }
+        
+        let size = *state.buffer_size.lock().unwrap();
+        assert_eq!(size, 2048);
+    }
+
+    #[test]
+    fn test_app_state_thread_safety() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = Arc::new(AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers,
+            buffer_size,
+        ));
+        
+        let state_clone = state.clone();
+        let handle = std::thread::spawn(move || {
+            state_clone.add_event("Thread event".to_string());
+            state_clone.ptt_active.store(true, Ordering::Relaxed);
+        });
+        
+        handle.join().unwrap();
+        
+        let events = state.events.lock().unwrap();
+        assert!(events.len() > 0);
+        assert_eq!(state.ptt_active.load(Ordering::Relaxed), true);
+    }
+
+    #[test]
+    fn test_event_timestamp_format() {
+        let peers = Arc::new(Mutex::new(Vec::new()));
+        let buffer_size = Arc::new(Mutex::new(0));
+        
+        let state = AppState::new(
+            "test".to_string(),
+            "127.0.0.1".to_string(),
+            8080,
+            peers,
+            buffer_size,
+        );
+        
+        state.add_event("Test event".to_string());
+        
+        let events = state.events.lock().unwrap();
+        let event = &events[0];
+        
+        // Event should contain timestamp in [HH:MM:SS] format
+        assert!(event.contains("["));
+        assert!(event.contains("]"));
+        assert!(event.contains("Test event"));
+    }
+}

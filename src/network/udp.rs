@@ -98,3 +98,109 @@ fn push_opus_packet(buffer: &AudioBuffer, packet: &[u8]) {
     buf.push_back((len >> 8) as u8); // high byte
     buf.extend(packet.iter().copied());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn test_push_opus_packet_empty() {
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let packet = vec![];
+        push_opus_packet(&buffer, &packet);
+        
+        let buf = buffer.lock().unwrap();
+        assert_eq!(buf.len(), 2); // Just the length prefix
+        assert_eq!(buf[0], 0);
+        assert_eq!(buf[1], 0);
+    }
+
+    #[test]
+    fn test_push_opus_packet_small() {
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let packet = vec![1, 2, 3, 4, 5];
+        push_opus_packet(&buffer, &packet);
+        
+        let buf = buffer.lock().unwrap();
+        assert_eq!(buf.len(), 7); // 2 bytes length + 5 bytes data
+        assert_eq!(buf[0], 5); // low byte of length
+        assert_eq!(buf[1], 0); // high byte of length
+        assert_eq!(buf[2], 1);
+        assert_eq!(buf[3], 2);
+        assert_eq!(buf[4], 3);
+    }
+
+    #[test]
+    fn test_push_opus_packet_large() {
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let packet = vec![0xFF; 300]; // 300 bytes
+        push_opus_packet(&buffer, &packet);
+        
+        let buf = buffer.lock().unwrap();
+        assert_eq!(buf.len(), 302); // 2 bytes length + 300 bytes data
+        assert_eq!(buf[0], 44); // 300 & 0xFF
+        assert_eq!(buf[1], 1);  // 300 >> 8
+    }
+
+    #[test]
+    fn test_push_opus_packet_multiple() {
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        
+        // Push first packet
+        let packet1 = vec![1, 2, 3];
+        push_opus_packet(&buffer, &packet1);
+        
+        // Push second packet
+        let packet2 = vec![4, 5];
+        push_opus_packet(&buffer, &packet2);
+        
+        let buf = buffer.lock().unwrap();
+        // First packet: 2 bytes length + 3 bytes data
+        // Second packet: 2 bytes length + 2 bytes data
+        assert_eq!(buf.len(), 9);
+        
+        // Verify first packet
+        assert_eq!(buf[0], 3); // length of first packet
+        assert_eq!(buf[1], 0);
+        assert_eq!(buf[2], 1);
+        assert_eq!(buf[3], 2);
+        assert_eq!(buf[4], 3);
+        
+        // Verify second packet
+        assert_eq!(buf[5], 2); // length of second packet
+        assert_eq!(buf[6], 0);
+        assert_eq!(buf[7], 4);
+        assert_eq!(buf[8], 5);
+    }
+
+    #[test]
+    fn test_udp_send_audio_empty_peers() {
+        // Bind to any available port
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
+        let peers = vec![];
+        let audio_data = vec![1, 2, 3, 4, 5];
+        
+        // Should not panic with empty peers
+        udp_send_audio(&socket, &audio_data, &peers);
+    }
+
+    #[test]
+    fn test_audio_buffer_thread_safety() {
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let buffer_clone = buffer.clone();
+        
+        let handle = std::thread::spawn(move || {
+            for i in 0..100 {
+                let packet = vec![i as u8];
+                push_opus_packet(&buffer_clone, &packet);
+            }
+        });
+        
+        handle.join().unwrap();
+        
+        let buf = buffer.lock().unwrap();
+        // Each packet: 2 bytes length + 1 byte data = 3 bytes
+        assert_eq!(buf.len(), 300);
+    }
+}

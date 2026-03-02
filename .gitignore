@@ -21,3 +21,16 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 file_example_WAV_1MG.wav
+
+coverage/
+*.ps1
+*.profraw
+*.profdata
+*.exe
+*.dll
+
+# Ignore generated documentation
+doc/
+*TEST_SUMMARY.md
+*TESTING.md
+*CI_SETUP.md

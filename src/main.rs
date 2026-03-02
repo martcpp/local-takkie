@@ -6,17 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::spawn;
 use std::time::Duration;
 
-mod audio;
-mod network;
-mod ui;
-
-use audio::rad::start_audio_output;
-use audio::sad::start_mic_capture;
-use network::mdns::Data;
-
-use network::udp::{AudioBuffer, audio_udp_recv};
-
-use ui::tui::{AppState, run_tui};
+use videolan::{
+    start_audio_output, start_mic_capture, Data,
+    AudioBuffer, audio_udp_recv, AppState, run_tui,
+};
 
 type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
 

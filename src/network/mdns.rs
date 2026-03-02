@@ -99,3 +99,91 @@ impl Data {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_data_new_creates_valid_instance() {
+        let data = Data::new("test-instance", 8080);
+        
+        assert_eq!(data.instance_name, "test-instance");
+        assert_eq!(data.port, 8080);
+        assert_eq!(data.service_type, "_walkietalkie._udp.local.");
+        assert_eq!(data.host_name, "test-instance.local.");
+    }
+
+    #[test]
+    fn test_data_new_with_spaces() {
+        let data = Data::new("Test Instance Name", 9090);
+        
+        assert_eq!(data.instance_name, "Test Instance Name");
+        assert_eq!(data.host_name, "test-instance-name.local.");
+    }
+
+    #[test]
+    fn test_data_new_with_special_chars() {
+        let data = Data::new("Test-Instance_123", 7070);
+        
+        assert_eq!(data.host_name, "test-instance_123.local.");
+    }
+
+    #[test]
+    fn test_service_info_creation() {
+        let data = Data::new("test", 8080);
+        let service_info = data.service_info();
+        
+        assert_eq!(service_info.get_fullname(), "test._walkietalkie._udp.local.");
+        assert_eq!(service_info.get_port(), 8080);
+    }
+
+    #[test]
+    fn test_multiple_instances_different_ports() {
+        let data1 = Data::new("instance1", 8080);
+        let data2 = Data::new("instance2", 9090);
+        
+        assert_eq!(data1.port, 8080);
+        assert_eq!(data2.port, 9090);
+        assert_ne!(data1.instance_name, data2.instance_name);
+    }
+
+    #[test]
+    fn test_peer_list_thread_safety() {
+        let peers: Peerlist = Arc::new(Mutex::new(Vec::new()));
+        let peers_clone = peers.clone();
+        
+        let handle = std::thread::spawn(move || {
+            let mut p = peers_clone.lock().unwrap();
+            p.push("127.0.0.1:8080".parse().unwrap());
+        });
+        
+        handle.join().unwrap();
+        
+        let p = peers.lock().unwrap();
+        assert_eq!(p.len(), 1);
+    }
+
+    #[test]
+    fn test_peer_list_no_duplicates() {
+        let peers: Peerlist = Arc::new(Mutex::new(Vec::new()));
+        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        
+        {
+            let mut p = peers.lock().unwrap();
+            if !p.contains(&addr) {
+                p.push(addr);
+            }
+        }
+        
+        {
+            let mut p = peers.lock().unwrap();
+            if !p.contains(&addr) {
+                p.push(addr);
+            }
+        }
+        
+        let p = peers.lock().unwrap();
+        assert_eq!(p.len(), 1);
+    }
+}
