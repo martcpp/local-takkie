@@ -953,8 +953,9 @@ The "no slack" column is the best case.
 is rebuilt, and most of the risk lives there. To keep motivation and feedback
 going, publish **pre-releases** along the way:
 
-- `v0.2.0-alpha.1` after E5 + E6: new audio engine with a basic UI.
-- `v0.2.0-alpha.2` after E7: new discovery.
+- `v0.2.0-alpha.1` after E5 + E6, plus the basic UDP path from E7.1: new
+  audio engine with a basic UI.
+- `v0.2.0-alpha.2` after the rest of E7: new discovery.
 
 Re-check the schedule at the end of every milestone, and move the dates
 rather than cutting tests or quality.
