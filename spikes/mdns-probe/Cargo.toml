@@ -1,0 +1,11 @@
+[package]
+name = "mdns-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mdns-sd = "0.20"
+
+# Its own workspace: the spike is never part of the main build.
+[workspace]

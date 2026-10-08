@@ -7,6 +7,7 @@
     <style>
       body { font-family: system-ui, sans-serif; margin: 0; padding: 48px 16px 24px; background: #111; color: #eee; }
       h1 { font-size: 1.4rem; margin: 0 0 4px; }
+      h2 { font-size: 1.1rem; margin: 20px 0 8px; }
       p { color: #aaa; margin: 0 0 16px; }
       .buttons { display: flex; gap: 8px; margin-bottom: 16px; }
       button { flex: 1; font-size: 1rem; padding: 14px 0; border: 0; border-radius: 10px; background: #2b6; color: #fff; }
@@ -19,7 +20,17 @@
     </style>
   </head>
   <body>
-    <h1>takkie: mic loopback</h1>
+    <h1>takkie spike</h1>
+    <h2>Discovery (E4.4)</h2>
+    <div class="buttons">
+      <button id="lockOn">Lock on</button>
+      <button id="lockOff" class="stop">Lock off</button>
+      <button id="disc" class="ping">Discover</button>
+      <button id="undisc" class="stop">Stop</button>
+    </div>
+    <pre id="disco">lock: unknown
+not discovering</pre>
+    <h2>Mic loopback (E4.2)</h2>
     <p>Spike E4.2. Start one backend, then Ping to compare. Use headphones, or keep the volume low so the speaker doesn't howl into the mic. Stay quiet while Ping runs.</p>
     <div class="buttons">
       <button id="cpal">cpal</button>
@@ -60,6 +71,40 @@ ${report}`.trim();
           $("error").textContent = `start ${backend}: ${e}`;
         }
       }
+
+      let lock = "not held";
+      let me = null;
+
+      async function setLock(on) {
+        try {
+          $("error").textContent = "";
+          lock = (await invoke("set_lock", { on })) ? "held" : "not held";
+        } catch (e) {
+          $("error").textContent = `lock: ${e}`;
+        }
+      }
+
+      $("lockOn").onclick = () => setLock(true);
+      $("lockOff").onclick = () => setLock(false);
+      $("disc").onclick = async () => {
+        try {
+          $("error").textContent = "";
+          me = await invoke("discover", { name: "phone" });
+        } catch (e) {
+          $("error").textContent = `discover: ${e}`;
+        }
+      };
+      $("undisc").onclick = () => { call("undiscover"); me = null; };
+
+      setInterval(async () => {
+        const peers = await invoke("peers").catch(() => []);
+        const lines = [`lock: ${lock}`, me ? `me: ${me}` : "not discovering"];
+        if (me) {
+          lines.push(`peers: ${peers.length}`);
+          for (const p of peers) lines.push(`  ${p.name} ${p.addrs.join(", ")} port ${p.port}, seen ${p.seen}x`);
+        }
+        $("disco").textContent = lines.join("\n");
+      }, 1000);
 
       $("cpal").onclick = () => start("cpal");
       $("aaudio").onclick = () => start("aaudio");

@@ -1,14 +1,20 @@
 #[cfg(target_os = "android")]
 mod aaudio;
 mod audio;
+mod discovery;
+mod multicast;
 
 use std::sync::Mutex;
 
 use audio::{Backend, Loopback, Stats};
-use tauri::State;
+use discovery::{Discovery, Peer};
+use tauri::{AppHandle, State};
 
 #[derive(Default)]
 struct Running(Mutex<Option<Loopback>>);
+
+#[derive(Default)]
+struct Discovering(Mutex<Option<Discovery>>);
 
 #[tauri::command]
 fn audio_info() -> String {
@@ -48,12 +54,47 @@ fn stats(running: State<'_, Running>) -> Result<Option<Stats>, String> {
     Ok(slot.as_ref().map(Loopback::stats))
 }
 
+// Async so it runs off the main thread, which the Kotlin side needs to answer.
+#[tauri::command]
+async fn set_lock(app: AppHandle, on: bool) -> Result<bool, String> {
+    multicast::set_lock(&app, on)
+}
+
+#[tauri::command]
+fn discover(state: State<'_, Discovering>, name: String) -> Result<String, String> {
+    let mut slot = state.0.lock().map_err(|_| "state poisoned")?;
+    if let Some(old) = slot.take() {
+        old.stop();
+    }
+    let discovery = Discovery::start(&name)?;
+    let me = discovery.me.clone();
+    *slot = Some(discovery);
+    Ok(me)
+}
+
+#[tauri::command]
+fn undiscover(state: State<'_, Discovering>) -> Result<(), String> {
+    let mut slot = state.0.lock().map_err(|_| "state poisoned")?;
+    if let Some(discovery) = slot.take() {
+        discovery.stop();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn peers(state: State<'_, Discovering>) -> Result<Vec<Peer>, String> {
+    let slot = state.0.lock().map_err(|_| "state poisoned")?;
+    Ok(slot.as_ref().map(Discovery::peers).unwrap_or_default())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(multicast::init())
         .manage(Running::default())
+        .manage(Discovering::default())
         .invoke_handler(tauri::generate_handler![
-            audio_info, start, stop, ping, stats
+            audio_info, start, stop, ping, stats, set_lock, discover, undiscover, peers
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
