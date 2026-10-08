@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #150 E3.7: cargo xtask release <version> `cc:wip`
+- [ ] #51 E3.6: Release v0.1.0 `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #51 E3.6: Release v0.1.0 `cc:todo`
+- [ ] #52 E4.1: Android toolchain and a Tauri 2 hello world on a real phone `cc:todo`
 
 ---
 
