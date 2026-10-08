@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #39 E2.2a: Shared workspace metadata, dependencies and lints `cc:wip`
+- [ ] #40 E2.2b: Release profile and rustfmt.toml `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #40 E2.2b: Release profile and rustfmt.toml `cc:todo`
+- [ ] #41 E2.3: xtask: cross-platform dev commands (cargo xtask ci) `cc:todo`
 
 ---
 
