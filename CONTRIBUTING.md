@@ -80,13 +80,15 @@ add a row to [docs/adr/README.md](docs/adr/README.md), and link it from the PR.
 
 Releases are cut from `develop` into `main` and published by tagging `main`.
 
-1. On a branch from `develop`, set the new `version` in `[workspace.package]`
-   (root `Cargo.toml`) and update the changelog, then open a PR into
+1. On a branch from `develop`, prepare the release, then open a PR into
    `develop`:
 
    ```bash
-   git cliff --tag v0.2.0 -o CHANGELOG.md
+   cargo xtask release 0.2.0
    ```
+
+   It sets `version` in `[workspace.package]`, updates `Cargo.lock` and
+   regenerates `CHANGELOG.md` with git-cliff, then prints the next steps.
 
 2. Open a release PR from `develop` into `main` and merge it with a merge
    commit (not squash), so `main` and `develop` keep the same history.
@@ -100,5 +102,6 @@ Releases are cut from `develop` into `main` and published by tagging `main`.
    ```
 
 The release workflow then builds the archives and installers for every
-platform and publishes the GitHub Release. Install git-cliff with
+platform and publishes the GitHub Release, using that version's section of
+`CHANGELOG.md` as the release notes. Install git-cliff with
 `cargo install --locked git-cliff`.

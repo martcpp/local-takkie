@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #50 E3.5: CHANGELOG with git-cliff `cc:wip`
+- [ ] #150 E3.7: cargo xtask release <version> `cc:wip`
 
 ---
 
