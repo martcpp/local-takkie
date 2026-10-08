@@ -2,6 +2,9 @@
 members = ["crates/*"]
 resolver = "3"
 
+[workspace.dependencies]
+cpal = "0.17.0"
+
 # Unoptimized, libopus links the debug C runtime on Windows and the build
 # fails (__imp__CrtDbgReportW).
 [profile.dev.package.audiopus_sys]

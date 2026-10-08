@@ -60,3 +60,5 @@ If CMake picks a Visual Studio version that isn't fully installed, set
 - Logic stays pure and testable; hardware and network go behind traits
   (`AudioSource`, `AudioSink`, `Transport`) so tests need no devices.
 - Never log passphrases, keys or audio content.
+- Dependencies used by two or more crates go in `[workspace.dependencies]`;
+  a dependency used by one crate stays in that crate's `Cargo.toml`.
