@@ -11,9 +11,12 @@ use std::{
 
 type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
 
+/// This device's mDNS service details.
 pub struct Data {
+    /// mDNS service type.
     pub service_type: String,
     instance_name: String,
+    /// Local IP address announced to peers.
     pub ip: IpAddr,
     host_name: String,
     port: u16,
@@ -21,6 +24,7 @@ pub struct Data {
 }
 
 impl Data {
+    /// Service details for `instant_name` on `port`, using this machine's local IP.
     pub fn new(instant_name: &str, port: u16) -> Self {
         let service_type = "_walkietalkie._udp.local.".to_string();
         let instance_name = instant_name.to_string();
@@ -47,6 +51,11 @@ impl Data {
         }
     }
 
+    /// The service record to register.
+    ///
+    /// # Panics
+    ///
+    /// If mdns-sd rejects the name or address.
     pub fn service_info(&self) -> ServiceInfo {
         ServiceInfo::new(
             self.service_type.as_str(),
@@ -59,6 +68,11 @@ impl Data {
         .expect("Failed to create service info")
     }
 
+    /// Registers this device on the network.
+    ///
+    /// # Panics
+    ///
+    /// If the mDNS daemon can't start or registration fails.
     pub fn announce(&self) {
         let mdns = ServiceDaemon::new().expect("Failed to create daemon");
         mdns.register(self.service_info())
@@ -70,6 +84,11 @@ impl Data {
         info!("Keep this running... announce");
     }
 
+    /// Browses for other devices and adds each one found to `peers_clone`.
+    ///
+    /// # Panics
+    ///
+    /// If the mDNS daemon can't start or browsing fails.
     pub fn discovery(&self, peers_clone: Peerlist) {
         let mdns = ServiceDaemon::new().expect("Failed to create daemon");
         let receiver = mdns

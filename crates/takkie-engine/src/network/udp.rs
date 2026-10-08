@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
+/// Length-prefixed Opus packets waiting to be decoded.
 pub type AudioBuffer = Arc<Mutex<VecDeque<u8>>>;
 
 // pub fn udp_recv(port: u16, udp_socket: &UdpSocket) {
@@ -23,6 +24,12 @@ pub type AudioBuffer = Arc<Mutex<VecDeque<u8>>>;
 //     });
 // }
 
+/// Spawns a thread that receives packets on `udp_socket` and queues them in
+/// `audio_buffer`.
+///
+/// # Panics
+///
+/// If the socket can't be cloned.
 pub fn audio_udp_recv(port: u16, udp_socket: &UdpSocket, audio_buffer: AudioBuffer) {
     info!("🎧 UDP listening on port {}", port);
 
@@ -70,6 +77,11 @@ pub fn audio_udp_recv(port: u16, udp_socket: &UdpSocket, audio_buffer: AudioBuff
 //     // sleep(Duration::from_secs(3));
 // }
 
+/// Sends `audio_bytes` to every peer. Send errors are logged and skipped.
+///
+/// # Panics
+///
+/// If the socket can't be cloned.
 pub fn udp_send_audio(udp_socket: &UdpSocket, audio_bytes: &[u8], peers_snapshot: &[SocketAddr]) {
     use log::warn;
     if peers_snapshot.is_empty() {

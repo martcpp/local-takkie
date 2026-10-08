@@ -8,6 +8,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+/// Opens the default microphone at 48 kHz. While `ptt_enabled` is set, sends
+/// 20 ms Opus frames to every peer.
+///
+/// # Panics
+///
+/// If there is no input device or it can't run at 48 kHz.
 pub fn start_mic_capture(
     udp_socket: &UdpSocket,
     peers: Arc<Mutex<Vec<SocketAddr>>>,

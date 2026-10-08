@@ -438,7 +438,12 @@ possible.
   ```
 
   CI runs `cargo clippy --all-targets -- -D warnings`, so every warning above
-  fails the build. Tests may `#[allow]` unwrap/expect.
+  fails the build. Tests may use unwrap/expect (`allow-unwrap-in-tests` and
+  `allow-expect-in-tests` in `clippy.toml`, not `#[allow]`).
+
+  `unwrap_used` and `expect_used` are staged: `takkie-core` denies them from
+  the start, and they join `[workspace.lints]` in E8.2, once the prototype
+  code that still uses them is replaced. No `#[allow]` is used to get there.
 - **Formatting:** `rustfmt.toml` checked in, and CI runs
   `cargo fmt --all --check`.
 - **Release profile:** `lto = "thin"`, `codegen-units = 1`, `strip = true`.
