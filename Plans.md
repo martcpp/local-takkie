@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #46 E3.1b: CI: cargo-deny job `cc:wip`
+- [ ] #47 E3.2: Release workflow with dist (cargo-dist) for the terminal app `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #47 E3.2: Release workflow with dist (cargo-dist) for the terminal app `cc:todo`
+- [ ] #48 E3.3: Dependabot for Cargo and GitHub Actions `cc:todo`
 
 ---
 
