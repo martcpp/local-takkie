@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #32 E1.4: Delete obsolete files and tidy .gitignore `cc:wip`
+- [ ] #33 E1.5: Fix formatting and clippy errors `cc:wip`
 
 ---
 

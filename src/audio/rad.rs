@@ -12,13 +12,16 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
     let config = device.default_output_config().unwrap();
-    
+
     let channels = config.channels() as usize;
-    
+
     // ✅ FIX: Force 48kHz - Opus only supports 8k/12k/16k/24k/48k
     let opus_sample_rate: u32 = 48000;
-    
-    info!("Output device: channels={}, forcing 48kHz for Opus", channels);
+
+    info!(
+        "Output device: channels={}, forcing 48kHz for Opus",
+        channels
+    );
 
     let opus_channels = if channels == 1 {
         Channels::Mono
@@ -27,8 +30,7 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
     };
 
     let decoder = Arc::new(Mutex::new(
-        Decoder::new(opus_sample_rate, opus_channels)
-            .expect("Failed to create Opus decoder"),
+        Decoder::new(opus_sample_rate, opus_channels).expect("Failed to create Opus decoder"),
     ));
 
     let pcm_buffer: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::new()));
@@ -93,10 +95,12 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
                     }
                 }
 
-                if *count % 100 == 0 {
+                if count.is_multiple_of(100) {
                     info!(
                         "Output callback #{}: wrote {} samples, pcm buffer: {} samples",
-                        count, samples_written, pcm.len()
+                        count,
+                        samples_written,
+                        pcm.len()
                     );
                 }
             },
@@ -105,4 +109,3 @@ pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
         )
         .unwrap()
 }
-
