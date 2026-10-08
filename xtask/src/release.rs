@@ -44,7 +44,9 @@ pub(crate) fn release(arg: Option<&str>) -> Result<()> {
   2. Once it's merged, open a release PR from develop into main and merge it
      with a merge commit.
   3. Tag that commit on main as v{new} and push the tag; the release workflow
-     does the rest."
+     does the rest.
+  4. Open a PR from main back into develop and merge it with a merge commit,
+     so the tag is in develop's history for the next changelog."
     );
     Ok(())
 }

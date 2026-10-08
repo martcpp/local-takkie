@@ -101,6 +101,11 @@ Releases are cut from `develop` into `main` and published by tagging `main`.
    git push origin v0.2.0
    ```
 
+4. Open a PR from `main` back into `develop` and merge it with a merge commit.
+   It changes no files, but it puts the release commit and its tag into
+   `develop`'s history; without it the next changelog would repeat everything
+   since the start.
+
 The release workflow then builds the archives and installers for every
 platform and publishes the GitHub Release, using that version's section of
 `CHANGELOG.md` as the release notes. Install git-cliff with

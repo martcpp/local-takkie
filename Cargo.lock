@@ -1303,11 +1303,11 @@ dependencies = [
 
 [[package]]
 name = "takkie-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "takkie-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cpal",
  "local-ip-address",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "takkie-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "cpal",
@@ -1872,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "semver",

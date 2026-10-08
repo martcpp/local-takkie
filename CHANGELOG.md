@@ -4,6 +4,13 @@ All notable changes to local-takkie. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-08
+
+### Fixed
+
+- Start with defaults when takkie gets no arguments
+
+
 ## [0.1.0] - 2026-10-08
 
 ### Added
@@ -60,6 +67,8 @@ All notable changes to local-takkie. The format follows
 - Add cargo xtask for cross-platform dev commands (#134)
 - Add cargo-deny for licences, advisories, bans and sources (#135)
 - Add cargo xtask release to prepare a release in one command (E3.7) (#151)
+- V0.1.0 (#153)
+- Record the v0.1.0 squash on main as merged into develop
 
 ### Other
 
@@ -89,4 +98,5 @@ All notable changes to local-takkie. The format follows
 - Made some fix
 - Setting for prod
 - Added cmd for build
+- V0.1.0 (#152)
 
