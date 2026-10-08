@@ -16,3 +16,10 @@ log = "0.4"
 mdns-sd = "0.17.1"
 opus = "0.3"
 ratatui = "0.28"
+
+# In debug builds the cmake crate builds libopus with the debug C runtime on
+# Windows (MSVC), which then fails to link against Rust's release runtime
+# (unresolved __imp__CrtDbgReportW). Optimising just this crate makes CMake use
+# the release runtime. Harmless on other platforms.
+[profile.dev.package.audiopus_sys]
+opt-level = 1
