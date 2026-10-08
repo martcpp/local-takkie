@@ -4,6 +4,7 @@ use cpal::traits::StreamTrait;
 
 use std::env;
 use std::net::{SocketAddr, UdpSocket};
+use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::thread::spawn;
 use std::time::Duration;
@@ -15,18 +16,40 @@ mod ui;
 
 type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
 
-fn main() {
+const USAGE: &str = "usage: takkie [name] [port]
+
+  name  how others see you (default: this computer's name)
+  port  UDP port to use (default: any free port)";
+
+fn main() -> ExitCode {
     // Don't initialize env_logger when using TUI
     // env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("Usage: takkie <instance_name> <port>");
-        return;
-    }
+    let args: Vec<String> = env::args().skip(1).collect();
+    let (name, requested_port) = match parse_args(&args, computer_name) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!("takkie: {err}\n\n{USAGE}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let instance_name = name.as_str();
 
-    let instance_name = args[1].as_str();
-    let port: u16 = args[2].parse().expect("Port must be a number");
+    // Bind first, so a free port picked by the OS is the one we announce.
+    let udp_socket = match UdpSocket::bind(("0.0.0.0", requested_port)) {
+        Ok(socket) => socket,
+        Err(err) => {
+            eprintln!("takkie: couldn't use UDP port {requested_port}: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let port = match udp_socket.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(err) => {
+            eprintln!("takkie: couldn't read the UDP port: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let mdns = Data::new(instance_name, port);
     let local_ip = mdns.ip.to_string();
@@ -38,7 +61,6 @@ fn main() {
 
     mdns.discovery(peers.clone());
 
-    let udp_socket = UdpSocket::bind(("0.0.0.0", port)).expect("Failed to bind UDP socket");
     udp_socket
         .set_nonblocking(true)
         .expect("Failed to set nonblocking");
@@ -108,5 +130,80 @@ fn main() {
     // Run the TUI - this blocks until user quits
     if let Err(e) = run_tui(app_state.clone()) {
         eprintln!("TUI error: {}", e);
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+/// Reads `[name] [port]`. Missing values fall back to `default_name()` and
+/// port 0, which lets the OS pick a free one.
+fn parse_args(
+    args: &[String],
+    default_name: impl FnOnce() -> String,
+) -> Result<(String, u16), String> {
+    match args {
+        [] => Ok((default_name(), 0)),
+        [name] => Ok((name.clone(), 0)),
+        [name, port] => port
+            .parse()
+            .map(|port| (name.clone(), port))
+            .map_err(|_| format!("`{port}` isn't a port number (0 to 65535)")),
+        _ => Err("too many arguments".to_owned()),
+    }
+}
+
+fn computer_name() -> String {
+    let name = gethostname::gethostname()
+        .to_string_lossy()
+        .trim()
+        .to_owned();
+    if name.is_empty() {
+        "takkie".to_owned()
+    } else {
+        name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn no_args_uses_defaults() {
+        assert_eq!(
+            parse_args(&[], || "pc".to_owned()),
+            Ok(("pc".to_owned(), 0))
+        );
+    }
+
+    #[test]
+    fn name_only_picks_any_port() {
+        assert_eq!(
+            parse_args(&args(&["alice"]), || unreachable!()),
+            Ok(("alice".to_owned(), 0))
+        );
+    }
+
+    #[test]
+    fn name_and_port() {
+        assert_eq!(
+            parse_args(&args(&["alice", "5000"]), || unreachable!()),
+            Ok(("alice".to_owned(), 5000))
+        );
+    }
+
+    #[test]
+    fn bad_port_is_an_error() {
+        assert!(parse_args(&args(&["alice", "nope"]), || unreachable!()).is_err());
+        assert!(parse_args(&args(&["alice", "70000"]), || unreachable!()).is_err());
+    }
+
+    #[test]
+    fn too_many_args_is_an_error() {
+        assert!(parse_args(&args(&["a", "1", "x"]), || unreachable!()).is_err());
     }
 }
