@@ -67,13 +67,14 @@ devices, and that they support 48 kHz.
 ## Development
 
 Work on a branch from `develop` and open a pull request into `develop`;
-`main` is only for releases. Before opening a PR, run:
+`main` is only for releases. Before opening a PR, run the same checks CI
+runs (formatting, clippy, tests and cargo-deny):
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo xtask ci
 ```
+
+`cargo xtask fmt` formats everything.
 
 ## License
 
