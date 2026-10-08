@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #33 E1.5: Fix formatting and clippy errors `cc:wip`
+- [ ] #35 E1.8: Windows build fixes for libopus (CMake 4 and debug CRT) `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #35 E1.8: Windows build fixes for libopus (CMake 4 and debug CRT) `cc:todo`
+- [ ] #36 E1.7: Rewrite the README `cc:todo`
 
 ---
 

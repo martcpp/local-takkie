@@ -16,3 +16,8 @@ log = "0.4"
 mdns-sd = "0.17.1"
 opus = "0.3"
 ratatui = "0.28"
+
+# Unoptimized, libopus links the debug C runtime on Windows and the build
+# fails (__imp__CrtDbgReportW).
+[profile.dev.package.audiopus_sys]
+opt-level = 1

@@ -39,11 +39,11 @@ cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 ```
 
-Known build issues on Windows (fixes are planned in roadmap E1.8):
-
-- libopus needs CMake; with CMake 4.x set `CMAKE_POLICY_VERSION_MINIMUM=3.5`.
-- Debug link error `__imp__CrtDbgReportW`: add
-  `[profile.dev.package.audiopus_sys] opt-level = 1`.
+libopus is built from C source, so CMake must be installed. The CMake 4 policy
+setting (`.cargo/config.toml`) and the Windows debug-runtime fix
+(`[profile.dev.package.audiopus_sys]` in `Cargo.toml`) are already in the repo.
+If CMake picks a Visual Studio version that isn't fully installed, set
+`CMAKE_GENERATOR` (for example `Visual Studio 17 2022`).
 
 ## Code standards (summary of ROADMAP.md §5)
 
