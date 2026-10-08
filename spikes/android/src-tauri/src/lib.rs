@@ -2,7 +2,7 @@
 mod aaudio;
 mod audio;
 mod discovery;
-mod multicast;
+mod platform;
 
 use std::sync::Mutex;
 
@@ -57,7 +57,12 @@ fn stats(running: State<'_, Running>) -> Result<Option<Stats>, String> {
 // Async so it runs off the main thread, which the Kotlin side needs to answer.
 #[tauri::command]
 async fn set_lock(app: AppHandle, on: bool) -> Result<bool, String> {
-    multicast::set_lock(&app, on)
+    platform::set_lock(&app, on)
+}
+
+#[tauri::command]
+async fn set_service(app: AppHandle, on: bool) -> Result<bool, String> {
+    platform::set_service(&app, on)
 }
 
 #[tauri::command]
@@ -90,11 +95,21 @@ fn peers(state: State<'_, Discovering>) -> Result<Vec<Peer>, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(multicast::init())
+        .plugin(platform::multicast())
+        .plugin(platform::service())
         .manage(Running::default())
         .manage(Discovering::default())
         .invoke_handler(tauri::generate_handler![
-            audio_info, start, stop, ping, stats, set_lock, discover, undiscover, peers
+            audio_info,
+            start,
+            stop,
+            ping,
+            stats,
+            set_lock,
+            set_service,
+            discover,
+            undiscover,
+            peers
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

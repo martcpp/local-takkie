@@ -8,7 +8,7 @@ use std::f32::consts::TAU;
 use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
-use std::sync::mpsc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -181,6 +181,7 @@ impl Loopback {
         let (stop, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel();
         let (input, output) = halves(&shared);
+        let watched = Arc::clone(&shared);
         let thread = thread::spawn(move || {
             let mut report = String::new();
             let opened = match backend {
@@ -191,7 +192,19 @@ impl Loopback {
             match opened {
                 Ok(streams) => {
                     let _ = ready_tx.send(Ok(report));
-                    let _ = stop_rx.recv();
+                    // Logs from here, not the callbacks, so logcat shows
+                    // whether audio kept flowing with the screen off.
+                    while let Err(RecvTimeoutError::Timeout) =
+                        stop_rx.recv_timeout(Duration::from_secs(10))
+                    {
+                        log::info!(
+                            "loopback: {} in, {} out callbacks, {} underruns, {} errors",
+                            watched.in_callbacks.load(Relaxed),
+                            watched.out_callbacks.load(Relaxed),
+                            watched.underruns.load(Relaxed),
+                            watched.errors.load(Relaxed),
+                        );
+                    }
                     drop(streams);
                 }
                 Err(e) => {

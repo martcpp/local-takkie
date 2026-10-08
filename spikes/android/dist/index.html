@@ -21,6 +21,12 @@
   </head>
   <body>
     <h1>takkie spike</h1>
+    <h2>Background (E4.5)</h2>
+    <div class="buttons">
+      <button id="svcOn">Service on</button>
+      <button id="svcOff" class="stop">Service off</button>
+    </div>
+    <pre id="svc">service: off</pre>
     <h2>Discovery (E4.4)</h2>
     <div class="buttons">
       <button id="lockOn">Lock on</button>
@@ -84,6 +90,18 @@ ${report}`.trim();
         }
       }
 
+      async function setService(on) {
+        try {
+          $("error").textContent = "";
+          const running = await invoke("set_service", { on });
+          $("svc").textContent = `service: ${running ? "on" : "off"}`;
+        } catch (e) {
+          $("error").textContent = `service: ${e}`;
+        }
+      }
+
+      $("svcOn").onclick = () => setService(true);
+      $("svcOff").onclick = () => setService(false);
       $("lockOn").onclick = () => setLock(true);
       $("lockOff").onclick = () => setLock(false);
       $("disc").onclick = async () => {
