@@ -416,8 +416,9 @@ possible.
 
 - **Edition 2024.** Set `rust-version = "1.88"` (the code uses let-chains) in
   `[workspace.package]`. CI tests this minimum version (MSRV).
-- **Shared versions:** all dependency versions live once in
-  `[workspace.dependencies]`.
+- **Dependencies:** a dependency used by two or more crates is declared once
+  in `[workspace.dependencies]` and used with `{ workspace = true }`. One used
+  by a single crate stays in that crate's `Cargo.toml`.
 - **Lints:** shared in `[workspace.lints]`, and each crate opts in with
   `lints.workspace = true`:
 

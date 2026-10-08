@@ -29,12 +29,12 @@ Platform tools:
 ```bash
 git clone https://github.com/martcpp/local-takkie.git
 cd local-takkie
-cargo run --release -- <your-name> <port>
+cargo run --release -p takkie-tui -- <your-name> <port>
 ```
 
-For example, run `cargo run --release -- alice 5000` on one computer and
-`cargo run --release -- bob 5000` on another. To try it on a single computer,
-give each copy a different port.
+For example, run `cargo run --release -p takkie-tui -- alice 5000` on one
+computer and `cargo run --release -p takkie-tui -- bob 5000` on another. To
+try it on a single computer, give each copy a different port.
 
 ## Using it
 
@@ -71,8 +71,8 @@ Work on a branch from `develop` and open a pull request into `develop`;
 
 ```bash
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
 ## License
