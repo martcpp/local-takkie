@@ -96,7 +96,7 @@ pub fn run_tui(state: Arc<AppState>) -> Result<(), io::Error> {
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, state: Arc<AppState>) -> io::Result<()> {
     let tick_rate = Duration::from_millis(50);
     let mut last_tick = Instant::now();
-    
+
     // Track if spacebar is currently being held down
     let mut spacebar_held = false;
     let mut last_spacebar_press = Instant::now();
@@ -108,32 +108,34 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, state: Arc<AppState>) -> io::
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
 
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                        state.running.store(false, Ordering::Relaxed);
-                        return Ok(());
-                    }
-                    KeyCode::Char(' ') => {
-                        // Only respond to Press events (Release is unreliable on Linux/macOS)
-                        if key.kind == KeyEventKind::Press {
-                            spacebar_held = true;
-                            last_spacebar_press = Instant::now();
-                            
-                            if !state.ptt_active.load(Ordering::Relaxed) {
-                                state.ptt_active.store(true, Ordering::Relaxed);
-                                state.add_event("🔴 PTT ACTIVE - Transmitting (hold spacebar)".to_string());
-                            }
-                        } else if key.kind == KeyEventKind::Release {
-                            // This will work on Windows, but not Linux/macOS
-                            spacebar_held = false;
-                            state.ptt_active.store(false, Ordering::Relaxed);
-                            state.add_event("⚫ PTT OFF - Not transmitting".to_string());
-                        }
-                    }
-                    _ => {}
+        if event::poll(timeout)?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                    state.running.store(false, Ordering::Relaxed);
+                    return Ok(());
                 }
+                KeyCode::Char(' ') => {
+                    // Only respond to Press events (Release is unreliable on Linux/macOS)
+                    if key.kind == KeyEventKind::Press {
+                        spacebar_held = true;
+                        last_spacebar_press = Instant::now();
+
+                        if !state.ptt_active.load(Ordering::Relaxed) {
+                            state.ptt_active.store(true, Ordering::Relaxed);
+                            state.add_event(
+                                "🔴 PTT ACTIVE - Transmitting (hold spacebar)".to_string(),
+                            );
+                        }
+                    } else if key.kind == KeyEventKind::Release {
+                        // This will work on Windows, but not Linux/macOS
+                        spacebar_held = false;
+                        state.ptt_active.store(false, Ordering::Relaxed);
+                        state.add_event("⚫ PTT OFF - Not transmitting".to_string());
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -376,7 +378,7 @@ mod tests {
     fn test_app_state_creation() {
         let peers = Arc::new(Mutex::new(Vec::new()));
         let buffer_size = Arc::new(Mutex::new(0));
-        
+
         let state = AppState::new(
             "test-instance".to_string(),
             "192.168.1.100".to_string(),
@@ -384,19 +386,19 @@ mod tests {
             peers,
             buffer_size,
         );
-        
+
         assert_eq!(state.instance_name, "test-instance");
         assert_eq!(state.local_ip, "192.168.1.100");
         assert_eq!(state.port, 8080);
-        assert_eq!(state.ptt_active.load(Ordering::Relaxed), false);
-        assert_eq!(state.running.load(Ordering::Relaxed), true);
+        assert!(!state.ptt_active.load(Ordering::Relaxed));
+        assert!(state.running.load(Ordering::Relaxed));
     }
 
     #[test]
     fn test_app_state_add_event() {
         let peers = Arc::new(Mutex::new(Vec::new()));
         let buffer_size = Arc::new(Mutex::new(0));
-        
+
         let state = AppState::new(
             "test".to_string(),
             "127.0.0.1".to_string(),
@@ -404,10 +406,10 @@ mod tests {
             peers,
             buffer_size,
         );
-        
+
         state.add_event("Test event 1".to_string());
         state.add_event("Test event 2".to_string());
-        
+
         let events = state.events.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert!(events[0].contains("Test event 1"));
@@ -418,7 +420,7 @@ mod tests {
     fn test_app_state_event_limit() {
         let peers = Arc::new(Mutex::new(Vec::new()));
         let buffer_size = Arc::new(Mutex::new(0));
-        
+
         let state = AppState::new(
             "test".to_string(),
             "127.0.0.1".to_string(),
@@ -426,12 +428,12 @@ mod tests {
             peers,
             buffer_size,
         );
-        
+
         // Add 150 events (more than the 100 limit)
         for i in 0..150 {
             state.add_event(format!("Event {}", i));
         }
-        
+
         let events = state.events.lock().unwrap();
         assert_eq!(events.len(), 100);
         // The oldest events should be removed
@@ -442,7 +444,7 @@ mod tests {
     fn test_app_state_thread_safety() {
         let peers = Arc::new(Mutex::new(Vec::new()));
         let buffer_size = Arc::new(Mutex::new(0));
-        
+
         let state = Arc::new(AppState::new(
             "test".to_string(),
             "127.0.0.1".to_string(),
@@ -450,25 +452,25 @@ mod tests {
             peers,
             buffer_size,
         ));
-        
+
         let state_clone = state.clone();
         let handle = std::thread::spawn(move || {
             state_clone.add_event("Thread event".to_string());
             state_clone.ptt_active.store(true, Ordering::Relaxed);
         });
-        
+
         handle.join().unwrap();
-        
+
         let events = state.events.lock().unwrap();
-        assert!(events.len() > 0);
-        assert_eq!(state.ptt_active.load(Ordering::Relaxed), true);
+        assert!(!events.is_empty());
+        assert!(state.ptt_active.load(Ordering::Relaxed));
     }
 
     #[test]
     fn test_event_timestamp_format() {
         let peers = Arc::new(Mutex::new(Vec::new()));
         let buffer_size = Arc::new(Mutex::new(0));
-        
+
         let state = AppState::new(
             "test".to_string(),
             "127.0.0.1".to_string(),
@@ -476,12 +478,12 @@ mod tests {
             peers,
             buffer_size,
         );
-        
+
         state.add_event("Test event".to_string());
-        
+
         let events = state.events.lock().unwrap();
         let event = &events[0];
-        
+
         // Event should contain timestamp in [HH:MM:SS] format
         assert!(event.contains("["));
         assert!(event.contains("]"));

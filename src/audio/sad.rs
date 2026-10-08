@@ -24,7 +24,10 @@ pub fn start_mic_capture(
     // ✅ FIX: Force 48kHz - must match decoder
     let opus_sample_rate: u32 = 48000;
 
-    info!("Input device: channels={}, forcing 48kHz for Opus", channels);
+    info!(
+        "Input device: channels={}, forcing 48kHz for Opus",
+        channels
+    );
 
     let opus_channels = if channels == 1 {
         Channels::Mono
@@ -87,4 +90,3 @@ pub fn start_mic_capture(
         )
         .unwrap()
 }
-

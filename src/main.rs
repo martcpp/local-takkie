@@ -7,8 +7,7 @@ use std::thread::spawn;
 use std::time::Duration;
 
 use local_takkie::{
-    start_audio_output, start_mic_capture, Data,
-    AudioBuffer, audio_udp_recv, AppState, run_tui,
+    AppState, AudioBuffer, Data, audio_udp_recv, run_tui, start_audio_output, start_mic_capture,
 };
 
 type Peerlist = Arc<Mutex<Vec<SocketAddr>>>;
