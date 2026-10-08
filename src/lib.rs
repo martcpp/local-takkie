@@ -1,4 +1,4 @@
-// VideoLAN Audio Streamer Library
+// local-takkie: LAN walkie-talkie library
 // This module exposes the library functionality for both the binary and tests
 
 pub mod audio;

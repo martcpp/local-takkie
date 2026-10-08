@@ -28,7 +28,7 @@ and order of work. Read the relevant section before starting a task.
 
 ## Build and test
 
-Current state: a single crate `videolan`, binary `vl` (`vl <name> <port>`).
+Current state: a single crate `local-takkie`, binary `takkie` (`takkie <name> <port>`).
 This section changes with tickets #30 (rename), #32 (scripts removed), #38
 (workspace) and #41 (`cargo xtask ci`); update it in those PRs.
 

@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #29 E1.1: Prune develop's tests: keep tests of our own code `cc:wip`
+- [ ] #30 E1.2: Rename crate to local-takkie and binary to takkie `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #30 E1.2: Rename crate to local-takkie and binary to takkie `cc:todo`
+- [ ] #31 E1.3: Remove the 22 unused dependencies `cc:todo`
 
 ---
 
