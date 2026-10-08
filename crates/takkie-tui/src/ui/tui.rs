@@ -87,7 +87,7 @@ pub fn run_tui(state: Arc<AppState>) -> Result<(), io::Error> {
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        println!("Error: {:?}", err);
+        eprintln!("Error: {:?}", err);
     }
 
     Ok(())

@@ -414,8 +414,8 @@ possible.
 
 ### 5.1 Toolchain and project setup
 
-- **Edition 2024.** Set `rust-version = "1.88"` (the code uses let-chains) in
-  `[workspace.package]`. CI tests this minimum version (MSRV).
+- **Edition 2024, latest stable Rust.** No `rust-version` is pinned for now;
+  `rust-toolchain.toml` asks rustup for the current stable release.
 - **Dependencies:** a dependency used by two or more crates is declared once
   in `[workspace.dependencies]` and used with `{ workspace = true }`. One used
   by a single crate stays in that crate's `Cargo.toml`.
@@ -438,7 +438,12 @@ possible.
   ```
 
   CI runs `cargo clippy --all-targets -- -D warnings`, so every warning above
-  fails the build. Tests may `#[allow]` unwrap/expect.
+  fails the build. Tests may use unwrap/expect (`allow-unwrap-in-tests` and
+  `allow-expect-in-tests` in `clippy.toml`, not `#[allow]`).
+
+  `unwrap_used` and `expect_used` are staged: `takkie-core` denies them from
+  the start, and they join `[workspace.lints]` in E8.2, once the prototype
+  code that still uses them is replaced. No `#[allow]` is used to get there.
 - **Formatting:** `rustfmt.toml` checked in, and CI runs
   `cargo fmt --all --check`.
 - **Release profile:** `lto = "thin"`, `codegen-units = 1`, `strip = true`.
@@ -536,7 +541,6 @@ hotfix/0.2.1-crash      ─────────────────PR─
 | Job | Runs on | Steps |
 |---|---|---|
 | `check` | Ubuntu, Windows, macOS | `fmt --check` · `clippy -D warnings` · `nextest` · build `takkie` |
-| `msrv` | Ubuntu | `cargo check` with Rust 1.88 |
 | `deny` | Ubuntu | `cargo deny check` |
 | `gui` | Ubuntu, Windows, macOS | Build the Tauri app (only when `apps/` changes; from M3) |
 | `android` | Ubuntu | Build the APK (from M4) |
@@ -617,7 +621,7 @@ the README, and `cargo machete` reports no unused dependencies.
 | Item | Work |
 |---|---|
 | E2.1 | Convert to a workspace: `crates/takkie-core`, `crates/takkie-engine`, `crates/takkie-tui` (move the current code into engine/tui). |
-| E2.2 | `[workspace.package]`, `[workspace.dependencies]`, `[workspace.lints]`, `rust-version = "1.88"`, release profile. |
+| E2.2 | `[workspace.package]`, `[workspace.dependencies]`, `[workspace.lints]`, release profile. |
 | E2.3 | `xtask` crate: `cargo xtask ci` runs fmt-check, clippy, tests and deny locally on any OS. |
 | E2.4 | `deny.toml` (licences, advisories, bans). |
 | E2.5 | `docs/adr/` with ADRs D1–D10 from section 4. |
@@ -629,7 +633,7 @@ the README, and `cargo machete` reports no unused dependencies.
 
 | Item | Work |
 |---|---|
-| E3.1 | Replace the old workflow with `ci.yml` (`check`, `msrv`, `deny` jobs from 6.2), with caching (`Swatinem/rust-cache`). |
+| E3.1 | Replace the old workflow with `ci.yml` (`check` and `deny` jobs from 6.2), with caching (`Swatinem/rust-cache`). |
 | E3.2 | `release.yml` with cargo-dist for the terminal app. |
 | E3.3 | Dependabot for cargo and actions. |
 | E3.4 | Branch protection requires CI on `develop` and `main`. |
@@ -1036,7 +1040,6 @@ rather than cutting tests or quality.
 | **Real-time callback** | The function the OS calls to get or give audio. If it is slow, you hear clicks. |
 | **AEAD** | Authenticated encryption (here ChaCha20-Poly1305): hides content and detects tampering. |
 | **KDF** | Key derivation function (here Argon2id): turns a passphrase into an encryption key, slowly on purpose to make guessing expensive. |
-| **MSRV** | Minimum supported Rust version. |
 | **ADR** | Architecture Decision Record: a short file explaining one technical decision and why. |
 | **Foreground service** | Android component that keeps an app running (with a notification) when it is not on screen. |
 | **MulticastLock** | Android switch that lets an app receive multicast (mDNS) packets on Wi-Fi. |

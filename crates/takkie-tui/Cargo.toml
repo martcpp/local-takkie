@@ -1,8 +1,10 @@
 [package]
 name = "takkie-tui"
-version = "0.1.0"
-edition = "2024"
-publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "takkie"
@@ -14,3 +16,6 @@ cpal = { workspace = true }
 crossterm = "0.28"
 ratatui = "0.28"
 takkie-engine = { path = "../takkie-engine" }
+
+[lints]
+workspace = true

@@ -11,7 +11,7 @@ the space bar to talk to everyone else; no internet, server or account needed.
 
 ## What you need
 
-- **Rust 1.88 or newer**, installed with [rustup](https://rustup.rs).
+- **The latest stable Rust**, installed with [rustup](https://rustup.rs).
 - **CMake**, because the Opus audio codec is compiled from C source.
 - A microphone, and headphones (there is no echo cancellation yet).
 

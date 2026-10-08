@@ -1,6 +1,8 @@
 //! The running engine: audio devices, codec, network and discovery.
 
+/// Microphone capture and speaker playback, with Opus.
 pub mod audio;
+/// UDP transport and mDNS discovery.
 pub mod network;
 
 pub use audio::rad::start_audio_output;

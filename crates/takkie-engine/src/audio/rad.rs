@@ -6,8 +6,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Length-prefixed Opus packets waiting to be decoded.
 pub type AudioBuffer = Arc<Mutex<VecDeque<u8>>>;
 
+/// Opens the default output device at 48 kHz and plays the packets in `buffer`.
+///
+/// # Panics
+///
+/// If there is no output device or it can't run at 48 kHz.
 pub fn start_audio_output(buffer: AudioBuffer) -> cpal::Stream {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
