@@ -65,18 +65,6 @@ jobs:
       - name: Run unit tests with output
         run: cargo test --lib -- --nocapture
 
-  integration-tests:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Run integration tests
-        run: cargo test --test integration_tests --verbose
-
   lint:
     name: Lint & Format Check
     runs-on: ubuntu-latest

@@ -62,9 +62,3 @@ ratatui = "0.28"
 crossterm = "0.28"
 
 # hound = "3.5"
-
-[dev-dependencies]
-# Test dependencies
-tokio-test = "0.4"
-mockall = "0.13"
-serial_test = "3.0"
