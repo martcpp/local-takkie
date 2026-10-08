@@ -30,11 +30,6 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
-# Unoptimized, libopus links the debug C runtime on Windows and the build
-# fails (__imp__CrtDbgReportW).
-[profile.dev.package.audiopus_sys]
-opt-level = 1
-
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
