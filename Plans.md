@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #40 E2.2b: Release profile and rustfmt.toml `cc:wip`
+- [ ] #41 E2.3: xtask: cross-platform dev commands (cargo xtask ci) `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #41 E2.3: xtask: cross-platform dev commands (cargo xtask ci) `cc:todo`
+- [ ] #42 E2.4: cargo-deny: licences, advisories, bans `cc:todo`
 
 ---
 
