@@ -1,25 +1,6 @@
-[package]
-name = "local-takkie"
-version = "0.1.0"
-edition = "2024"
-
 [workspace]
 members = ["crates/*"]
 resolver = "3"
-
-[[bin]]
-name = "takkie"
-path = "src/main.rs"
-
-[dependencies]
-chrono = "0.4"
-cpal = "0.17.0"
-crossterm = "0.28"
-local-ip-address = "0.6"
-log = "0.4"
-mdns-sd = "0.17.1"
-opus = "0.3"
-ratatui = "0.28"
 
 # Unoptimized, libopus links the debug C runtime on Windows and the build
 # fails (__imp__CrtDbgReportW).

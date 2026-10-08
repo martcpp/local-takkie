@@ -28,15 +28,20 @@ and order of work. Read the relevant section before starting a task.
 
 ## Build and test
 
-Current state: a single crate `local-takkie`, binary `takkie` (`takkie <name> <port>`).
-This section changes with tickets #30 (rename), #32 (scripts removed), #38
-(workspace) and #41 (`cargo xtask ci`); update it in those PRs.
+Cargo workspace (virtual root):
+
+- `crates/takkie-core`: pure logic, no I/O (empty for now)
+- `crates/takkie-engine`: audio, codec, network and discovery
+- `crates/takkie-tui`: the `takkie` binary (`takkie <name> <port>`)
+
+This section changes again with #41 (`cargo xtask ci`).
 
 ```bash
-cargo build
-cargo test
+cargo build --workspace
+cargo test --workspace
 cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
+cargo run -p takkie-tui -- <name> <port>
 ```
 
 libopus is built from C source, so CMake must be installed. The CMake 4 policy

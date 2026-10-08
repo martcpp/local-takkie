@@ -616,20 +616,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "local-takkie"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "cpal",
- "crossterm",
- "local-ip-address",
- "log",
- "mdns-sd",
- "opus",
- "ratatui",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1208,10 +1194,24 @@ version = "0.1.0"
 [[package]]
 name = "takkie-engine"
 version = "0.1.0"
+dependencies = [
+ "cpal",
+ "local-ip-address",
+ "log",
+ "mdns-sd",
+ "opus",
+]
 
 [[package]]
 name = "takkie-tui"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cpal",
+ "crossterm",
+ "ratatui",
+ "takkie-engine",
+]
 
 [[package]]
 name = "thiserror"

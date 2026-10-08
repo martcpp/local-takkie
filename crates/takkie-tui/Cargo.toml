@@ -3,3 +3,14 @@ name = "takkie-tui"
 version = "0.1.0"
 edition = "2024"
 publish = false
+
+[[bin]]
+name = "takkie"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4"
+cpal = "0.17.0"
+crossterm = "0.28"
+ratatui = "0.28"
+takkie-engine = { path = "../takkie-engine" }

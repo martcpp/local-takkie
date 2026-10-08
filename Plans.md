@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #37 E2.1a: Create the Cargo workspace and the three crates `cc:wip`
+- [ ] #38 E2.1b: Move existing code into takkie-engine and takkie-tui `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #38 E2.1b: Move existing code into takkie-engine and takkie-tui `cc:todo`
+- [ ] #39 E2.2a: Shared workspace metadata, dependencies and lints `cc:todo`
 
 ---
 
