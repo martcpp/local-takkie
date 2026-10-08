@@ -193,7 +193,7 @@ fn ui(f: &mut Frame, state: &AppState) {
 
 fn render_header(f: &mut Frame, area: Rect, state: &AppState) {
     let title = Paragraph::new(format!(
-        "🎵 VideoLAN Audio Streamer - {} ({}:{})",
+        "🎵 local-takkie - {} ({}:{})",
         state.instance_name, state.local_ip, state.port
     ))
     .style(

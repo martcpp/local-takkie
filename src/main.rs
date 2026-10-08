@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::spawn;
 use std::time::Duration;
 
-use videolan::{
+use local_takkie::{
     start_audio_output, start_mic_capture, Data,
     AudioBuffer, audio_udp_recv, AppState, run_tui,
 };
@@ -19,7 +19,7 @@ fn main() {
 
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: vl <instance_name> <port>");
+        eprintln!("Usage: takkie <instance_name> <port>");
         return;
     }
 
