@@ -3,6 +3,10 @@ name = "local-takkie"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
 [[bin]]
 name = "takkie"
 path = "src/main.rs"

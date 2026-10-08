@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #36 E1.7: Rewrite the README `cc:wip`
+- [ ] #37 E2.1a: Create the Cargo workspace and the three crates `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #37 E2.1a: Create the Cargo workspace and the three crates `cc:todo`
+- [ ] #38 E2.1b: Move existing code into takkie-engine and takkie-tui `cc:todo`
 
 ---
 
