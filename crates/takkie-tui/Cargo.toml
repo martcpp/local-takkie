@@ -19,3 +19,7 @@ takkie-engine = { path = "../takkie-engine" }
 
 [lints]
 workspace = true
+
+# Not published to crates.io, but released as downloadable binaries.
+[package.metadata.dist]
+dist = true
