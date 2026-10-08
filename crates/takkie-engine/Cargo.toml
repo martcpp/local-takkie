@@ -10,7 +10,7 @@ publish.workspace = true
 cpal = { workspace = true }
 local-ip-address = "0.6"
 log = "0.4"
-mdns-sd = "0.17.1"
+mdns-sd = "0.20.0"
 opus = "0.3"
 
 [lints]
