@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #121 E1.9: Review fixes for the Claude Code harness setup `cc:wip`
+- [ ] #29 E1.1: Prune develop's tests: keep tests of our own code `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #29 E1.1: Prune develop's tests: keep tests of our own code `cc:todo`
+- [ ] #30 E1.2: Rename crate to local-takkie and binary to takkie `cc:todo`
 
 ---
 
