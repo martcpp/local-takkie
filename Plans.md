@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #30 E1.2: Rename crate to local-takkie and binary to takkie `cc:wip`
+- [ ] #31 E1.3: Remove the 22 unused dependencies `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #31 E1.3: Remove the 22 unused dependencies `cc:todo`
+- [ ] #32 E1.4: Delete obsolete files and tidy .gitignore `cc:todo`
 
 ---
 
