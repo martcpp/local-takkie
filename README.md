@@ -74,7 +74,8 @@ runs (formatting, clippy, tests and cargo-deny):
 cargo xtask ci
 ```
 
-`cargo xtask fmt` formats everything.
+`cargo xtask fmt` formats everything. The full workflow and code rules are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

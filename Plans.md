@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #43 E2.5: Write ADRs for decisions D1-D10 `cc:wip`
+- [ ] #44 E2.6: CONTRIBUTING.md and PR template `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #44 E2.6: CONTRIBUTING.md and PR template `cc:todo`
+- [ ] #45 E3.1a: New ci.yml: fmt, clippy, test, build on Windows/macOS/Linux `cc:todo`
 
 ---
 
