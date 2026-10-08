@@ -37,7 +37,6 @@ cargo build
 cargo test
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
-./run_tests.sh [all|unit|network]
 ```
 
 Known build issues on Windows (fixes are planned in roadmap E1.8):

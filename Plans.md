@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #31 E1.3: Remove the 22 unused dependencies `cc:wip`
+- [ ] #32 E1.4: Delete obsolete files and tidy .gitignore `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #32 E1.4: Delete obsolete files and tidy .gitignore `cc:todo`
+- [ ] #35 E1.8: Windows build fixes for libopus (CMake 4 and debug CRT) `cc:todo`
 
 ---
 
