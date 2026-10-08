@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #48 E3.3: Dependabot for Cargo and GitHub Actions `cc:wip`
+- [ ] #50 E3.5: CHANGELOG with git-cliff `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #49 E3.4: Branch protection for develop and main `cc:todo`
+- [ ] #51 E3.6: Release v0.1.0 `cc:todo`
 
 ---
 

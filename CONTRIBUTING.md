@@ -75,3 +75,30 @@ For a decision that shapes the project (a library, a protocol change, a new
 rule), add an ADR: copy
 [docs/adr/0000-template.md](docs/adr/0000-template.md), take the next number,
 add a row to [docs/adr/README.md](docs/adr/README.md), and link it from the PR.
+
+## Releasing
+
+Releases are cut from `develop` into `main` and published by tagging `main`.
+
+1. On a branch from `develop`, set the new `version` in `[workspace.package]`
+   (root `Cargo.toml`) and update the changelog, then open a PR into
+   `develop`:
+
+   ```bash
+   git cliff --tag v0.2.0 -o CHANGELOG.md
+   ```
+
+2. Open a release PR from `develop` into `main` and merge it with a merge
+   commit (not squash), so `main` and `develop` keep the same history.
+3. Tag the merge commit on `main` and push the tag. The tag has to match the
+   version in `Cargo.toml`:
+
+   ```bash
+   git switch main && git pull
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The release workflow then builds the archives and installers for every
+platform and publishes the GitHub Release. Install git-cliff with
+`cargo install --locked git-cliff`.
