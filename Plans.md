@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #44 E2.6: CONTRIBUTING.md and PR template `cc:wip`
+- [ ] #45 E3.1a: New ci.yml: fmt, clippy, test, build on Windows/macOS/Linux `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #45 E3.1a: New ci.yml: fmt, clippy, test, build on Windows/macOS/Linux `cc:todo`
+- [ ] #46 E3.1b: CI: cargo-deny job `cc:todo`
 
 ---
 
