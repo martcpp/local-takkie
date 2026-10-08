@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #41 E2.3: xtask: cross-platform dev commands (cargo xtask ci) `cc:wip`
+- [ ] #42 E2.4: cargo-deny: licences, advisories, bans `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #42 E2.4: cargo-deny: licences, advisories, bans `cc:todo`
+- [ ] #43 E2.5: Write ADRs for decisions D1-D10 `cc:todo`
 
 ---
 
