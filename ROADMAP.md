@@ -389,8 +389,9 @@ second.
 
 ## 4. Key technical decisions
 
-Each decision becomes a short Architecture Decision Record (ADR) in `docs/adr/`
-during E2. "Reconsider if" says what would make us change it.
+Each decision has a short Architecture Decision Record (ADR) in
+[`docs/adr/`](docs/adr/README.md). "Reconsider if" says what would make us
+change it.
 
 | # | Decision | Why | Alternatives considered | Reconsider if |
 |---|---|---|---|---|

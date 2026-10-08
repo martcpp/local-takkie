@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #42 E2.4: cargo-deny: licences, advisories, bans `cc:wip`
+- [ ] #43 E2.5: Write ADRs for decisions D1-D10 `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #43 E2.5: Write ADRs for decisions D1-D10 `cc:todo`
+- [ ] #44 E2.6: CONTRIBUTING.md and PR template `cc:todo`
 
 ---
 
