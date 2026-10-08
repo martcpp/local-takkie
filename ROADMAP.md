@@ -548,8 +548,7 @@ hotfix/0.2.1-crash      ─────────────────PR─
 | `fuzz` | Ubuntu, nightly schedule | 10 minutes per fuzz target |
 
 The Linux runner installs `libasound2-dev` (plus WebKitGTK for the `gui` job
-only). `CMAKE_POLICY_VERSION_MINIMUM=3.5` comes from the committed
-`.cargo/config.toml` (E1.8), so CI and developers get it automatically.
+only). libopus comes from `opusic-sys` (E4.3), which builds it with CMake.
 
 ### 6.3 Release (`.github/workflows/release.yml`, on tag `v*` on `main`)
 
@@ -985,9 +984,9 @@ rather than cutting tests or quality.
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Android kills or pauses audio in the background | High | High | Microphone foreground service (E4.5, E15.2); proven in the spike |
-| libopus doesn't cross-compile for Android | Medium | High | Spike E4.3; fallbacks: prebuilt libopus per ABI, another binding |
+| libopus doesn't cross-compile for Android | **Resolved** | High | `opus` 0.4 (`opusic-sys`) cross-compiles with the NDK and runs on a phone (E4.3). Needs `ANDROID_NDK_HOME` and Ninja. |
 | Networks that block multicast (guest Wi-Fi, "AP isolation") | Medium | Medium | Manual peers (E7.5); clear troubleshooting docs |
-| libopus build problems on Windows (CMake 4 rejects it; debug build fails to link) | **Confirmed** | Medium | Both fixed with config (E1.8, verified). Revisit the Opus binding in E4.3, ideally one that doesn't need CMake. |
+| libopus build problems on Windows (CMake 4 rejects it; debug build fails to link) | **Resolved** | Medium | Fixed with config in E1.8, then gone with `opus` 0.4 in E4.3, so the config was removed. No usable binding avoids CMake yet: `opus-rs` (pure Rust) panics with FEC on. |
 | Terminals that don't report key release | Certain (most terminals) | Low | Toggle mode fallback (E9.3); GUI apps don't have this problem |
 | Variety of Linux audio stacks (ALSA/PulseAudio/PipeWire) | Medium | Medium | Device negotiation + resampling (E6.2–E6.3); test matrix |
 | Echo when using speakers | Medium | Medium | Half-duplex by default (D9) |
