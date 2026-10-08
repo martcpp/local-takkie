@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #35 E1.8: Windows build fixes for libopus (CMake 4 and debug CRT) `cc:wip`
+- [ ] #36 E1.7: Rewrite the README `cc:wip`
 
 ---
 
@@ -23,7 +23,7 @@
 
 <!-- Add tasks with cc:todo here. Only the next few tickets of the current milestone. -->
 
-- [ ] #36 E1.7: Rewrite the README `cc:todo`
+- [ ] #37 E2.1a: Create the Cargo workspace and the three crates `cc:todo`
 
 ---
 
