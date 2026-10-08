@@ -2,3 +2,5 @@
 //! state machine. No I/O, so everything here is easy to test.
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+
+fn  badly_formatted( ) {}
