@@ -14,6 +14,7 @@ path = "src/main.rs"
 chrono = "0.4"
 cpal = { workspace = true }
 crossterm = "0.29"
+gethostname = "1.1"
 ratatui = "0.28"
 takkie-engine = { path = "../takkie-engine" }
 

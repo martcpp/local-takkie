@@ -15,7 +15,7 @@
 
 <!-- Add tasks with cc:wip here. -->
 
-- [ ] #51 E3.6: Release v0.1.0 `cc:wip`
+- [ ] #156 Double-clicking takkie.exe closes straight away `cc:wip`
 
 ---
 

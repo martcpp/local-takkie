@@ -29,12 +29,16 @@ Platform tools:
 ```bash
 git clone https://github.com/martcpp/local-takkie.git
 cd local-takkie
-cargo run --release -p takkie-tui -- <your-name> <port>
+cargo run --release -p takkie-tui
 ```
 
-For example, run `cargo run --release -p takkie-tui -- alice 5000` on one
-computer and `cargo run --release -p takkie-tui -- bob 5000` on another. To
-try it on a single computer, give each copy a different port.
+That's it: by default it uses your computer's name and any free port. You can
+also choose them, `takkie [name] [port]`, for example
+`cargo run --release -p takkie-tui -- alice 5000`. To try it on a single
+computer, just start two copies.
+
+With a release download, run `takkie` (or double-click `takkie.exe` on
+Windows).
 
 ## Using it
 
