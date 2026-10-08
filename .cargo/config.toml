@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --package xtask --"
+
+[env]
+# Bundled libopus still asks for CMake 3.1 behaviour, which CMake 4 dropped.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

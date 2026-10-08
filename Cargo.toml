@@ -1,64 +1,41 @@
-[package]
-name = "videolan"
+[workspace]
+members = ["crates/*", "xtask"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/martcpp/local-takkie"
+publish = false
 
-[[bin]]
-name = "vl"
-path = "src/main.rs"
-
-
-# [[bin]]
-# name = "sad"
-# path = "src/sad.rs"
-
-
-# [[bin]]
-# name = "rad"
-# path = "src/rad.rs"
-
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-# bincode = "3.0.0"
-clap = { version = "4.3", features = ["derive"] }
-log = "0.4"
-env_logger = "0.11.8"
-webrtc = "0.14.0"
-mdns = "3.0.0"
-futures-util = "0.3.31"
-libmdns = "0.7"
-get_if_addrs = "0.5"
-
-# Make sure to use the most recent version here instead of nn. (at the time of writing: 0.32)
-# iroh = { version = "0.95.1", features = ["discovery-local-network"] }
-mdns-sd = "0.17.1"
-anyhow = "1.0"
+[workspace.dependencies]
 cpal = "0.17.0"
-rand = "0.8"
-socket2 = "0.5"
 
-opus = "0.3"
-aes-gcm = "0.10"
-nnnoiseless = "0.5"
-hound = "3.5"
-chrono = "0.4"
-bincode = "1.3"
-dasp_sample = "0.11"
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
 
-tauri-plugin-os = "2.0"
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# unwrap_used and expect_used join here in E8.2, once the prototype code is
+# replaced. takkie-core already denies them.
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
 
-hostname = "0.4"
-# or
-sys-info = "0.9"
-# or
-sysinfo = "0.30"
-# or
-whoami = "1.5"
+# Unoptimized, libopus links the debug C runtime on Windows and the build
+# fails (__imp__CrtDbgReportW).
+[profile.dev.package.audiopus_sys]
+opt-level = 1
 
-local-ip-address = "0.6"
-ratatui = "0.28"
-crossterm = "0.28"
-
-# hound = "3.5"
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
