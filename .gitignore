@@ -34,3 +34,9 @@ doc/
 *TEST_SUMMARY.md
 *TESTING.md
 *CI_SETUP.md
+
+# Claude Code / Harness local state (shared config in .claude/ stays tracked)
+.claude/settings.local.json
+.claude/sessions/
+.claude/state/
+.claude/memory/
