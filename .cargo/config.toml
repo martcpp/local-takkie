@@ -1,4 +1,3 @@
 [env]
-# The libopus bundled with audiopus_sys (via the opus crate) declares CMake 3.1
-# compatibility, which CMake 4 removed. This lets it configure on CMake 4.x.
+# Bundled libopus still asks for CMake 3.1 behaviour, which CMake 4 dropped.
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
