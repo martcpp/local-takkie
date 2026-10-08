@@ -1,0 +1,22 @@
+[package]
+name = "opus-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+opus03 = ["dep:opus03"]
+opus04 = ["dep:opus04"]
+opusic = ["dep:opusic-c"]
+transpiled = ["dep:unsafe-libopus"]
+pure = ["dep:opus-rs"]
+
+[dependencies]
+opus03 = { package = "opus", version = "0.3", optional = true }
+opus04 = { package = "opus", version = "0.4", optional = true }
+opusic-c = { version = "1.6", optional = true }
+unsafe-libopus = { version = "0.2", optional = true }
+opus-rs = { version = "0.1", optional = true }
+
+# Its own workspace: the spike is never part of the main build.
+[workspace]

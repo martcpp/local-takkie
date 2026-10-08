@@ -1,2 +1,3 @@
 # Claude Code harness state, created in whatever folder a session runs in.
 .claude/
+target/
