@@ -5,14 +5,88 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>takkie spike</title>
     <style>
-      body { font-family: system-ui, sans-serif; display: grid; place-items: center; height: 100vh; margin: 0; background: #111; color: #eee; }
-      h1 { font-size: 2rem; }
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 48px 16px 24px; background: #111; color: #eee; }
+      h1 { font-size: 1.4rem; margin: 0 0 4px; }
+      p { color: #aaa; margin: 0 0 16px; }
+      .buttons { display: flex; gap: 8px; margin-bottom: 16px; }
+      button { flex: 1; font-size: 1rem; padding: 14px 0; border: 0; border-radius: 10px; background: #2b6; color: #fff; }
+      button.stop { background: #c33; }
+      button.ping { background: #36c; }
+      .meter { height: 14px; background: #333; border-radius: 7px; overflow: hidden; margin-bottom: 12px; }
+      .meter div { height: 100%; width: 0; background: #2b6; }
+      pre { background: #1c1c1c; padding: 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; font-size: 0.8rem; }
+      #error { color: #f66; }
     </style>
   </head>
   <body>
-    <main>
-      <h1>takkie on Android</h1>
-      <p>Spike E4.1: Tauri 2 hello world.</p>
-    </main>
+    <h1>takkie: mic loopback</h1>
+    <p>Spike E4.2. Start one backend, then Ping to compare. Use headphones, or keep the volume low so the speaker doesn't howl into the mic. Stay quiet while Ping runs.</p>
+    <div class="buttons">
+      <button id="cpal">cpal</button>
+      <button id="aaudio">AAudio fast</button>
+      <button id="voice">AAudio voice</button>
+      <button id="stop" class="stop">Stop</button>
+      <button id="ping" class="ping">Ping</button>
+    </div>
+    <div class="meter"><div id="level"></div></div>
+    <pre id="error"></pre>
+    <pre id="report">not running</pre>
+    <pre id="stats">stopped</pre>
+    <pre id="info">loading device info...</pre>
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const $ = (id) => document.getElementById(id);
+      let lastPing = "none yet";
+
+      async function call(cmd) {
+        try {
+          $("error").textContent = "";
+          return await invoke(cmd);
+        } catch (e) {
+          $("error").textContent = `${cmd}: ${e}`;
+        }
+      }
+
+      async function start(backend) {
+        lastPing = "none yet";
+        $("report").textContent = `${backend}: starting...`;
+        try {
+          $("error").textContent = "";
+          const report = await invoke("start", { backend });
+          $("report").textContent = `${backend}
+${report}`.trim();
+        } catch (e) {
+          $("report").textContent = "not running";
+          $("error").textContent = `start ${backend}: ${e}`;
+        }
+      }
+
+      $("cpal").onclick = () => start("cpal");
+      $("aaudio").onclick = () => start("aaudio");
+      $("voice").onclick = () => start("voice");
+      $("stop").onclick = () => { call("stop"); $("report").textContent = "not running"; };
+      $("ping").onclick = () => { lastPing = "waiting..."; call("ping"); };
+
+      setInterval(async () => {
+        const s = await invoke("stats").catch(() => null);
+        if (!s) {
+          $("stats").textContent = "stopped";
+          $("level").style.width = "0";
+          return;
+        }
+        if (s.ping_ms != null) lastPing = `${s.ping_ms.toFixed(1)} ms`;
+        if (s.ping_failed) lastPing = "no beep heard within 1 s";
+        $("level").style.width = `${Math.min(100, s.peak * 100)}%`;
+        $("stats").textContent = [
+          `frames per callback: in ${s.in_frames}, out ${s.out_frames}`,
+          `callbacks: in ${s.in_callbacks}, out ${s.out_callbacks}`,
+          `queued: ${s.queued_ms.toFixed(1)} ms`,
+          `underruns: ${s.underruns}, dropped samples: ${s.dropped}, errors: ${s.errors}, device xruns: ${s.xruns}`,
+          `ping round trip: ${lastPing}`,
+        ].join("\n");
+      }, 250);
+
+      invoke("audio_info").then((t) => ($("info").textContent = t));
+    </script>
   </body>
 </html>

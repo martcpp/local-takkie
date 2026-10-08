@@ -7,6 +7,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "takkie spike",
@@ -31,6 +32,7 @@
       "icons/icon.ico"
     ],
     "android": {
+      "minSdkVersion": 28,
       "debugApplicationIdSuffix": ".debug"
     }
   }
