@@ -3,8 +3,10 @@
 //! Plain Rust instead of shell scripts, so it works the same on Windows, macOS
 //! and Linux.
 
+mod release;
+
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
@@ -13,13 +15,16 @@ use anyhow::{Context, Result, bail};
 const USAGE: &str = "usage: cargo xtask <command>
 
 commands:
-  ci    run the checks CI runs: fmt, clippy, tests and cargo-deny
-  fmt   format the whole workspace";
+  ci                  run the checks CI runs: fmt, clippy, tests and cargo-deny
+  fmt                 format the whole workspace
+  release <version>   set the version and regenerate CHANGELOG.md, e.g. release 0.2.0";
 
 fn main() -> ExitCode {
-    let result = match env::args().nth(1).as_deref() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("fmt") => cargo(&["fmt", "--all"]),
+        Some("release") => release::release(args.get(1).map(String::as_str)),
         Some("help" | "-h" | "--help") => {
             eprintln!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -51,7 +56,7 @@ fn ci() -> Result<()> {
     cargo(&["test", "--workspace"])?;
     if !workspace_root().join("deny.toml").exists() {
         eprintln!("\nxtask: skipping cargo deny check (no deny.toml yet)");
-    } else if !cargo_deny_installed() {
+    } else if !succeeds(cargo_bin(), &["deny", "--version"]) {
         eprintln!(
             "\nxtask: skipping cargo deny check (install it: cargo install --locked cargo-deny)"
         );
@@ -62,29 +67,52 @@ fn ci() -> Result<()> {
     Ok(())
 }
 
-fn cargo(args: &[&str]) -> Result<()> {
-    eprintln!("\n> cargo {}", args.join(" "));
-    let status = Command::new(cargo_bin())
+pub(crate) fn cargo(args: &[&str]) -> Result<()> {
+    run(cargo_bin(), "cargo", args)
+}
+
+pub(crate) fn git(args: &[&str]) -> Result<()> {
+    run("git", "git", args)
+}
+
+fn run(program: impl AsRef<OsStr>, name: &str, args: &[&str]) -> Result<()> {
+    eprintln!("\n> {name} {}", args.join(" "));
+    let status = Command::new(program)
         .args(args)
         .current_dir(workspace_root())
         .status()
-        .context("couldn't start cargo")?;
+        .with_context(|| format!("couldn't start {name}"))?;
     if !status.success() {
-        bail!("`cargo {}` failed ({status})", args.join(" "));
+        bail!("`{name} {}` failed ({status})", args.join(" "));
     }
     Ok(())
 }
 
-fn cargo_deny_installed() -> bool {
-    Command::new(cargo_bin())
-        .args(["deny", "--version"])
+/// Runs git quietly and returns its trimmed stdout.
+pub(crate) fn git_output(args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workspace_root())
+        .stderr(Stdio::null())
+        .output()
+        .context("couldn't start git")?;
+    if !output.status.success() {
+        bail!("`git {}` failed ({})", args.join(" "), output.status);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Whether the command runs and exits successfully, with its output hidden.
+pub(crate) fn succeeds(program: impl AsRef<OsStr>, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
 }
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     let xtask_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     xtask_dir.parent().unwrap_or(xtask_dir).to_path_buf()
 }
