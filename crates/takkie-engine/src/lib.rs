@@ -9,7 +9,10 @@ pub mod net;
 /// UDP transport and mDNS discovery.
 pub mod network;
 
-pub use engine::{Engine, EngineConfig, EngineError};
+pub use audio::devices::{DeviceInfo, DeviceList, Direction};
+pub use engine::{
+    Engine, EngineConfig, EngineError, EngineEvent, EngineSnapshot, EngineStats, PeerInfo,
+};
 
 pub use audio::rad::start_audio_output;
 pub use audio::sad::start_mic_capture;

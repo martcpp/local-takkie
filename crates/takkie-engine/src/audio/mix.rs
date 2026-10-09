@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwap;
 use crossbeam_channel::Receiver;
 
 use takkie_core::dsp::{apply_gain, mix_into, soft_limit};
@@ -58,6 +59,8 @@ pub struct MixCounters {
     pub concealed: AtomicU64,
     /// Played as silence.
     pub silenced: AtomicU64,
+    /// Audio waiting to be heard: jitter buffer plus speaker queue, in ms.
+    pub buffer_ms: AtomicU32,
 }
 
 /// Playback settings the UI changes while audio runs.
@@ -128,6 +131,8 @@ pub struct MixShared {
     pub controls: Arc<MixControls>,
     /// Lost-frame counts.
     pub counters: Arc<MixCounters>,
+    /// Senders whose voice is playing, published by the mix thread.
+    pub talking: Arc<ArcSwap<Vec<PeerId>>>,
 }
 
 /// Every sender's buffer and decoder, mixed one frame at a time.
@@ -384,8 +389,11 @@ impl MixThread {
         shared: MixShared,
     ) -> Result<Self, MixError> {
         let mut pacer = Pacer::new(sink.sample_rate())?;
+        let rate = sink.sample_rate().max(1) as usize;
+        let talking = Arc::clone(&shared.talking);
         let mut mixer = Mixer::with_shared(shared);
         let counters = mixer.counters();
+        let counting = Arc::clone(&counters);
         let controls = mixer.controls();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
@@ -406,6 +414,14 @@ impl MixThread {
                     if let Err(error) = pacer.fill(&mut mixer, sink.as_mut(), Instant::now()) {
                         log::error!("mix stopped: {error}");
                         return;
+                    }
+                    let waiting = mixer.buffered() * 20 + sink.queued() * 1_000 / rate;
+                    counting
+                        .buffer_ms
+                        .store(u32::try_from(waiting).unwrap_or(u32::MAX), Relaxed);
+                    let now_talking = mixer.talking();
+                    if **talking.load() != now_talking {
+                        talking.store(Arc::new(now_talking));
                     }
                     thread::sleep(Duration::from_millis(5));
                 }

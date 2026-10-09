@@ -100,6 +100,11 @@ impl PeerTable {
             .filter(move |peer| peer.channel == channel)
     }
 
+    /// Every peer, in id order.
+    pub fn iter(&self) -> impl Iterator<Item = &Peer> {
+        self.peers.values()
+    }
+
     /// A peer by id.
     #[must_use]
     pub fn get(&self, id: PeerId) -> Option<&Peer> {
@@ -134,6 +139,16 @@ mod tests {
             last_seen: seen,
             source: PeerSource::Mdns,
         }
+    }
+
+    #[test]
+    fn iter_lists_everyone_in_id_order() {
+        let mut table = PeerTable::new();
+        let now = Instant::now();
+        table.upsert(peer(9, 1, now));
+        table.upsert(peer(2, 5, now));
+        let ids: Vec<u64> = table.iter().map(|p| p.id.get()).collect();
+        assert_eq!(ids, [2, 9]);
     }
 
     #[test]
