@@ -75,6 +75,14 @@ impl Resampler {
             .map_or(FRAME, |fft| fft.input_frames_next())
     }
 
+    /// Most input one call can need.
+    #[must_use]
+    pub fn input_max(&self) -> usize {
+        self.inner
+            .as_ref()
+            .map_or(FRAME, |fft| fft.input_frames_max())
+    }
+
     /// Output room one call can need.
     #[must_use]
     pub fn output_max(&self) -> usize {

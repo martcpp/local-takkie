@@ -12,5 +12,7 @@ pub mod resample;
 pub mod sad;
 /// Real-time cpal streams.
 pub mod stream;
+/// The sending thread.
+pub mod tx;
 
 pub use io::{AudioSink, AudioSource};
