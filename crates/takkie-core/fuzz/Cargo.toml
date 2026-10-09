@@ -1,0 +1,22 @@
+[package]
+name = "takkie-core-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+takkie-core = { path = ".." }
+
+# Needs nightly, so it stays out of the main workspace.
+[workspace]
+
+[[bin]]
+name = "decode_header"
+path = "fuzz_targets/decode_header.rs"
+test = false
+doc = false
+bench = false
