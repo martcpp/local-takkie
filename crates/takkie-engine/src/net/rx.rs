@@ -16,7 +16,7 @@ use takkie_core::{ChannelId, PeerId};
 
 use super::peers::PeerMessage;
 use super::transport::Transport;
-use crate::audio::mix::RxPacket;
+use crate::audio::mix::{MixInput, RxPacket};
 
 const MAX_NAME: usize = 64;
 const HEARD_EVERY: Duration = Duration::from_secs(1);
@@ -91,7 +91,7 @@ fn name(payload: &[u8]) -> String {
 /// Where routed packets go.
 pub struct RxOutputs {
     /// Audio for the mix thread.
-    pub audio: Sender<RxPacket>,
+    pub audio: Sender<MixInput>,
     /// Peer news for the control thread.
     pub peers: Sender<PeerMessage>,
 }
@@ -167,7 +167,7 @@ impl RxThread {
                                     addr: from,
                                 });
                             }
-                            outputs.audio.send(packet).is_ok()
+                            outputs.audio.send(MixInput::Packet(packet)).is_ok()
                         }
                         Route::Peer(message) => {
                             if let PeerMessage::Bye { sender } = &message {
@@ -325,8 +325,12 @@ mod tests {
             .unwrap();
 
         let wait = Duration::from_secs(2);
-        assert_eq!(audio_out.recv_timeout(wait).unwrap().payload, b"a");
-        assert_eq!(audio_out.recv_timeout(wait).unwrap().payload, b"b");
+        let payload = || match audio_out.recv_timeout(wait).unwrap() {
+            MixInput::Packet(packet) => packet.payload,
+            MixInput::Left(_) => Vec::new(),
+        };
+        assert_eq!(payload(), b"a");
+        assert_eq!(payload(), b"b");
         assert!(matches!(
             peers_out.recv_timeout(wait).unwrap(),
             PeerMessage::Heard { addr, .. } if addr == peer.local_addr()
