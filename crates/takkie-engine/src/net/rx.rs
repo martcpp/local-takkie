@@ -14,41 +14,12 @@ use crossbeam_channel::Sender;
 use takkie_core::protocol::{Flags, Header, PacketKind};
 use takkie_core::{ChannelId, PeerId};
 
+use super::peers::PeerMessage;
 use super::transport::Transport;
 use crate::audio::mix::RxPacket;
 
 const MAX_NAME: usize = 64;
 const HEARD_EVERY: Duration = Duration::from_secs(1);
-
-/// What the peer table needs to hear about.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PeerMessage {
-    /// A keep-alive with the sender's name.
-    Hello {
-        /// Who.
-        sender: PeerId,
-        /// Display name.
-        name: String,
-        /// Their channel.
-        channel: ChannelId,
-        /// Where it came from.
-        addr: SocketAddr,
-    },
-    /// Audio arrived, so they're alive at `addr`.
-    Heard {
-        /// Who.
-        sender: PeerId,
-        /// Their channel.
-        channel: ChannelId,
-        /// Where it came from.
-        addr: SocketAddr,
-    },
-    /// They're leaving.
-    Bye {
-        /// Who.
-        sender: PeerId,
-    },
-}
 
 /// What happened to received datagrams.
 #[derive(Debug, Default)]
