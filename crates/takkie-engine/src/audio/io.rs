@@ -18,6 +18,9 @@ pub trait AudioSink: Send {
     /// Room left, in samples.
     fn free(&self) -> usize;
 
+    /// Samples waiting to play.
+    fn queued(&self) -> usize;
+
     /// Queues as many samples as fit and returns how many. Never blocks.
     fn write(&mut self, samples: &[f32]) -> usize;
 }

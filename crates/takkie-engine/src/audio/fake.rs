@@ -134,12 +134,6 @@ impl FakeSink {
         &self.played
     }
 
-    /// Samples written but not played yet.
-    #[must_use]
-    pub fn queued(&self) -> usize {
-        self.queued.len()
-    }
-
     /// How many [`play`](Self::play) calls ran dry.
     #[must_use]
     pub fn underruns(&self) -> usize {
@@ -154,6 +148,10 @@ impl AudioSink for FakeSink {
 
     fn free(&self) -> usize {
         self.capacity.saturating_sub(self.queued.len())
+    }
+
+    fn queued(&self) -> usize {
+        self.queued.len()
     }
 
     fn write(&mut self, samples: &[f32]) -> usize {
