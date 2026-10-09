@@ -10,5 +10,7 @@ pub mod rad;
 pub mod resample;
 /// Microphone side: encodes 20 ms Opus frames and sends them to peers.
 pub mod sad;
+/// Real-time cpal streams.
+pub mod stream;
 
 pub use io::{AudioSink, AudioSource};
