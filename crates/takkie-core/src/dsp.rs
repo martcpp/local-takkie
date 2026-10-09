@@ -1,9 +1,6 @@
-//! Small audio helpers for the engine's real-time paths. Samples are `f32` in
-//! [-1, 1], multi-channel buffers are interleaved, and the caller owns every
-//! buffer, so nothing here allocates.
+//! Audio helpers for real-time paths. Buffers are interleaved and caller-owned.
 
-/// Averages interleaved frames into mono and returns how many samples it
-/// wrote. A trailing partial frame is ignored.
+/// Averages frames into mono; returns samples written.
 pub fn downmix_to_mono(input: &[f32], channels: usize, out: &mut [f32]) -> usize {
     if channels == 0 {
         return 0;
@@ -17,8 +14,7 @@ pub fn downmix_to_mono(input: &[f32], channels: usize, out: &mut [f32]) -> usize
     written
 }
 
-/// Copies each mono sample to every channel and returns how many frames it
-/// wrote.
+/// Copies each sample to every channel; returns frames written.
 pub fn upmix_from_mono(input: &[f32], channels: usize, out: &mut [f32]) -> usize {
     if channels == 0 {
         return 0;
@@ -31,12 +27,12 @@ pub fn upmix_from_mono(input: &[f32], channels: usize, out: &mut [f32]) -> usize
     written
 }
 
-/// Multiplies every sample by `gain`.
+/// Scales in place.
 pub fn apply_gain(samples: &mut [f32], gain: f32) {
     samples.iter_mut().for_each(|sample| *sample *= gain);
 }
 
-/// Adds `src` into `acc`, sample by sample, up to the shorter length.
+/// Adds `src` into `acc`.
 pub fn mix_into(acc: &mut [f32], src: &[f32]) {
     acc.iter_mut()
         .zip(src)
@@ -45,8 +41,7 @@ pub fn mix_into(acc: &mut [f32], src: &[f32]) {
 
 const KNEE: f32 = 0.8;
 
-/// Keeps samples inside [-1, 1]. Anything up to 0.8 is untouched; louder
-/// samples curve smoothly towards 1 instead of clipping hard. NaN becomes 0.
+/// Curves anything above 0.8 towards 1 instead of clipping. NaN becomes 0.
 pub fn soft_limit(samples: &mut [f32]) {
     for sample in samples {
         if sample.is_nan() {
@@ -58,17 +53,17 @@ pub fn soft_limit(samples: &mut [f32]) {
     }
 }
 
-/// Loudness of one frame.
+/// Loudness of a frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Level {
-    /// Root mean square, for a meter.
+    /// Root mean square.
     pub rms: f32,
     /// Largest absolute sample.
     pub peak: f32,
 }
 
 impl Level {
-    /// Measures `samples`; an empty frame is silent.
+    /// Measures a frame.
     #[must_use]
     pub fn of(samples: &[f32]) -> Self {
         if samples.is_empty() {
