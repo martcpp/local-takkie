@@ -163,8 +163,8 @@ impl CpalSource {
 
     /// Dropped samples and errors so far.
     #[must_use]
-    pub fn counters(&self) -> &Counters {
-        &self.counters
+    pub fn counters(&self) -> Arc<Counters> {
+        Arc::clone(&self.counters)
     }
 }
 
@@ -230,8 +230,8 @@ impl CpalSink {
 
     /// Underruns and errors so far.
     #[must_use]
-    pub fn counters(&self) -> &Counters {
-        &self.counters
+    pub fn counters(&self) -> Arc<Counters> {
+        Arc::clone(&self.counters)
     }
 }
 
@@ -242,6 +242,10 @@ impl AudioSink for CpalSink {
 
     fn free(&self) -> usize {
         self.ring.slots()
+    }
+
+    fn queued(&self) -> usize {
+        self.ring.buffer().capacity() - self.ring.slots()
     }
 
     fn write(&mut self, samples: &[f32]) -> usize {
