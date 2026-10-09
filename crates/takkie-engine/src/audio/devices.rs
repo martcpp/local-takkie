@@ -1,4 +1,4 @@
-//! What audio devices exist, for `--list-devices` and device pickers.
+//! What audio devices exist, and picking one by name.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -31,10 +31,99 @@ pub struct DeviceList {
     pub outputs: Vec<DeviceInfo>,
 }
 
-/// Why devices couldn't be listed.
+/// Microphone or speaker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// A microphone.
+    Input,
+    /// A speaker.
+    Output,
+}
+
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Input => "input",
+            Self::Output => "output",
+        })
+    }
+}
+
+/// Why a device couldn't be listed or found.
 #[derive(Debug, Error)]
-#[error("couldn't list audio devices: {0}")]
-pub struct DeviceError(#[from] DevicesError);
+pub enum DeviceError {
+    /// The audio system couldn't be asked.
+    #[error("couldn't list audio devices: {0}")]
+    List(#[from] DevicesError),
+    /// No device at all, not even a default.
+    #[error("no audio {0} device found")]
+    Missing(Direction),
+}
+
+/// A device picked for use.
+pub struct Chosen {
+    /// The device.
+    pub device: cpal::Device,
+    /// Its name.
+    pub name: String,
+    /// Set when the wanted name matched nothing and the default was used.
+    pub warning: Option<String>,
+}
+
+/// The device named `wanted`: an exact match, else the first partial,
+/// case-insensitive one. No name, or no match, gives the default.
+///
+/// # Errors
+/// [`DeviceError`] if devices can't be listed or there's none at all.
+pub fn find_device(direction: Direction, wanted: Option<&str>) -> Result<Chosen, DeviceError> {
+    let host = cpal::default_host();
+    let mut warning = None;
+    if let Some(wanted) = wanted {
+        let devices: Vec<cpal::Device> = match direction {
+            Direction::Input => host.input_devices()?.collect(),
+            Direction::Output => host.output_devices()?.collect(),
+        };
+        let names: Vec<String> = devices.iter().map(device_name).collect();
+        if let Some(index) = pick(&names, wanted)
+            && let (Some(device), Some(name)) = (devices.get(index), names.get(index))
+        {
+            return Ok(Chosen {
+                device: device.clone(),
+                name: name.clone(),
+                warning: None,
+            });
+        }
+        warning = Some(format!(
+            "no {direction} device matches \"{wanted}\"; using the default"
+        ));
+    }
+    let device = match direction {
+        Direction::Input => host.default_input_device(),
+        Direction::Output => host.default_output_device(),
+    }
+    .ok_or(DeviceError::Missing(direction))?;
+    Ok(Chosen {
+        name: device_name(&device),
+        device,
+        warning,
+    })
+}
+
+pub(crate) fn pick(names: &[String], wanted: &str) -> Option<usize> {
+    let lower = wanted.to_lowercase();
+    names.iter().position(|name| name == wanted).or_else(|| {
+        names
+            .iter()
+            .position(|name| name.to_lowercase().contains(&lower))
+    })
+}
+
+fn device_name(device: &cpal::Device) -> String {
+    device
+        .description()
+        .map(|d| d.name().to_string())
+        .unwrap_or_else(|_| "unknown device".into())
+}
 
 /// Lists the default host's devices.
 ///
@@ -67,10 +156,7 @@ fn info(
     default: Option<&cpal::DeviceId>,
     configs: impl Iterator<Item = SupportedStreamConfigRange>,
 ) -> DeviceInfo {
-    let name = device
-        .description()
-        .map(|d| d.name().to_string())
-        .unwrap_or_else(|_| "unknown device".into());
+    let name = device_name(device);
     let is_default = default.is_some() && device.id().ok().as_ref() == default;
     summarize(name, is_default, configs)
 }
@@ -167,5 +253,35 @@ mod tests {
             [range(1, 48_000, 48_000, SampleFormat::F32)].into_iter(),
         );
         assert_eq!(info.to_string(), "Mic: 48000 Hz, up to 1 ch, f32");
+    }
+
+    fn names() -> Vec<String> {
+        [
+            "Speakers",
+            "Headset Earphone",
+            "headset",
+            "USB Audio Device",
+        ]
+        .map(String::from)
+        .to_vec()
+    }
+
+    #[test]
+    fn an_exact_name_wins_over_a_partial_one() {
+        assert_eq!(pick(&names(), "headset"), Some(2));
+        assert_eq!(pick(&names(), "Speakers"), Some(0));
+    }
+
+    #[test]
+    fn otherwise_the_first_case_insensitive_partial_match() {
+        assert_eq!(pick(&names(), "HEADSET ear"), Some(1));
+        assert_eq!(pick(&names(), "usb"), Some(3));
+        assert_eq!(pick(&names(), "Head"), Some(1));
+    }
+
+    #[test]
+    fn no_match_is_none() {
+        assert_eq!(pick(&names(), "bluetooth"), None);
+        assert_eq!(pick(&[], "anything"), None);
     }
 }
