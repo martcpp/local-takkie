@@ -1,5 +1,4 @@
-//! Who is around: one entry per running app, fed by mDNS, packets and
-//! manual configuration.
+//! Who is around.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -10,39 +9,39 @@ use crate::{ChannelId, PeerId};
 /// How we learned about a peer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PeerSource {
-    /// Found with mDNS.
+    /// mDNS.
     Mdns,
-    /// Heard from its packets.
+    /// Its packets.
     Packet,
-    /// Added by hand, so it never expires.
+    /// Added by hand; never expires.
     Manual,
 }
 
-/// One running app on the network.
+/// One running app.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Peer {
-    /// Its id.
+    /// Id.
     pub id: PeerId,
     /// Display name.
     pub name: String,
-    /// Where to send packets.
+    /// Packet address.
     pub addr: SocketAddr,
-    /// The channel it's on.
+    /// Channel.
     pub channel: ChannelId,
-    /// When we last heard from it.
+    /// Last heard from.
     pub last_seen: Instant,
-    /// How we learned about it.
+    /// Source.
     pub source: PeerSource,
 }
 
-/// A change worth showing in a UI.
+/// A change for the UI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PeerEvent {
-    /// A new peer.
+    /// New peer.
     Joined(PeerId),
-    /// Its name, address or channel changed.
+    /// Name, address or channel changed.
     Updated(PeerId),
-    /// It left or went quiet.
+    /// Left or went quiet.
     Left(PeerId),
 }
 
@@ -59,8 +58,7 @@ impl PeerTable {
         Self::default()
     }
 
-    /// Adds or refreshes a peer. A refresh that changes nothing visible
-    /// returns `None`.
+    /// `None` when only `last_seen` changed.
     pub fn upsert(&mut self, mut peer: Peer) -> Option<PeerEvent> {
         let Some(known) = self.peers.get_mut(&peer.id) else {
             let id = peer.id;
@@ -76,12 +74,12 @@ impl PeerTable {
         changed.then_some(PeerEvent::Updated(known.id))
     }
 
-    /// Removes a peer, for example after its Bye packet.
+    /// For Bye packets.
     pub fn remove(&mut self, id: PeerId) -> Option<PeerEvent> {
         self.peers.remove(&id).map(|_| PeerEvent::Left(id))
     }
 
-    /// Drops peers not heard from for `timeout`, apart from manual ones.
+    /// Drops peers quiet for `timeout`, except manual ones.
     pub fn expire(&mut self, now: Instant, timeout: Duration) -> Vec<PeerEvent> {
         let mut left = Vec::new();
         self.peers.retain(|&id, peer| {
@@ -95,26 +93,26 @@ impl PeerTable {
         left
     }
 
-    /// Peers on `channel`, in id order.
+    /// Peers on `channel`.
     pub fn peers_on(&self, channel: ChannelId) -> impl Iterator<Item = &Peer> {
         self.peers
             .values()
             .filter(move |peer| peer.channel == channel)
     }
 
-    /// One peer by id.
+    /// A peer by id.
     #[must_use]
     pub fn get(&self, id: PeerId) -> Option<&Peer> {
         self.peers.get(&id)
     }
 
-    /// How many peers are known.
+    /// Number of peers.
     #[must_use]
     pub fn len(&self) -> usize {
         self.peers.len()
     }
 
-    /// Whether no peers are known.
+    /// Whether it's empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.peers.is_empty()

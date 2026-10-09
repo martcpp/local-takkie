@@ -1,25 +1,17 @@
-//! Push-to-talk logic shared by every UI, so a key behaves the same
-//! everywhere.
-//!
-//! Terminals report a held key differently. Windows sends repeated presses
-//! and then a release. Most Linux terminals send the repeated presses but
-//! never a release, which is what [`PttMode::HoldWithTimeout`] is for. The
-//! kitty keyboard protocol sends [`PttInput::Repeat`] instead of repeated
-//! presses. Time is passed in, so tests can replay real key timings.
+//! Push-to-talk logic shared by every UI.
 
 use std::time::{Duration, Instant};
 
 /// How the push-to-talk key behaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PttMode {
-    /// Transmit while the key is down; needs release events.
+    /// Transmit while the key is down.
     Hold,
-    /// Each tap turns transmitting on or off.
+    /// Each tap toggles transmitting.
     Toggle,
-    /// Transmit while presses keep coming, for terminals that never report a
-    /// release. Stops `timeout` after the last one.
+    /// For terminals that never report a release.
     HoldWithTimeout {
-        /// Must be longer than the keyboard's repeat delay, or it flickers.
+        /// Longer than the key-repeat delay, or it flickers.
         timeout: Duration,
     },
 }
@@ -27,17 +19,17 @@ pub enum PttMode {
 /// A key event or a clock tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PttInput {
-    /// The key went down, or a terminal's auto-repeat sent another press.
+    /// Key down, or an auto-repeat press.
     Press,
-    /// An explicit auto-repeat event.
+    /// Auto-repeat.
     Repeat,
-    /// The key came up.
+    /// Key up.
     Release,
-    /// Time passed with no key event.
+    /// No key event.
     Tick,
 }
 
-/// A change in whether we're transmitting.
+/// A transmit change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PttChange {
     /// Started transmitting.
@@ -46,11 +38,10 @@ pub enum PttChange {
     Stopped,
 }
 
-/// A press this soon after the last key event is auto-repeat, not a new tap.
-/// Longer than usual repeat delays (250 to 660 ms).
+// Longer than usual key-repeat delays (250 to 660 ms).
 const REPEAT_GAP: Duration = Duration::from_millis(700);
 
-/// Turns key events into transmit on and off.
+/// Push-to-talk state.
 #[derive(Clone, Debug)]
 pub struct PttController {
     mode: PttMode,
@@ -60,7 +51,7 @@ pub struct PttController {
 }
 
 impl PttController {
-    /// A controller that isn't transmitting yet.
+    /// Not transmitting yet.
     #[must_use]
     pub fn new(mode: PttMode) -> Self {
         Self {
@@ -71,13 +62,13 @@ impl PttController {
         }
     }
 
-    /// Whether we're transmitting now.
+    /// Whether we're transmitting.
     #[must_use]
     pub fn is_transmitting(&self) -> bool {
         self.transmitting
     }
 
-    /// Feeds one input that happened at `now`.
+    /// Feeds one input.
     pub fn handle(&mut self, input: PttInput, now: Instant) -> Option<PttChange> {
         let repeat = input == PttInput::Repeat
             || (input == PttInput::Press
