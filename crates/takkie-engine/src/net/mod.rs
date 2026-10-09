@@ -1,5 +1,7 @@
 /// mDNS announcing and browsing.
 pub mod discovery;
+/// Peer news and the peer table.
+pub mod peers;
 /// The receiving thread.
 pub mod rx;
 /// The sending side.

@@ -1,14 +1,16 @@
-//! Announces this machine over mDNS and prints every takkie it finds.
-//! Run two copies (here or on two machines) to see them find each other.
+//! Announces this machine over mDNS and prints every takkie that joins,
+//! changes or leaves. Run two copies (here or on two machines) to see them
+//! find each other.
 //!
 //! `cargo run -p takkie-engine --example discovery -- [name] [channel] [seconds]`
 
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
-use mdns_sd::ServiceEvent;
+use takkie_core::peers::{PeerEvent, PeerTable};
 use takkie_core::{ChannelId, PeerId};
-use takkie_engine::net::discovery::{Announcement, Discovery, SERVICE};
+use takkie_engine::net::discovery::{Announcement, Browser, Discovery};
+use takkie_engine::net::peers::apply;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -27,7 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         channel,
         port: 40_000,
     })?;
-    let events = discovery.daemon().browse(SERVICE)?;
+    let (peers, news) = crossbeam_channel::unbounded();
+    let _browser = Browser::spawn(&discovery, peers)?;
     let mut out = io::stdout().lock();
     writeln!(
         out,
@@ -35,36 +38,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         discovery.fullname()
     )?;
 
+    let mut table = PeerTable::new();
     let start = Instant::now();
     while let Some(left) = Duration::from_secs(seconds).checked_sub(start.elapsed()) {
-        let Ok(event) = events.recv_timeout(left) else {
+        let Ok(message) = news.recv_timeout(left) else {
             break;
         };
         let at = start.elapsed().as_secs_f32();
-        match event {
-            ServiceEvent::ServiceResolved(service) => {
-                let addrs: Vec<String> = service
-                    .get_addresses()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect();
-                let txt = |key| service.get_property_val_str(key).unwrap_or("-").to_string();
-                writeln!(
-                    out,
-                    "{at:6.1}s resolved {} at {} port {} | v={} id={} ch={} name={}",
-                    service.get_fullname(),
-                    addrs.join(", "),
-                    service.get_port(),
-                    txt("v"),
-                    txt("id"),
-                    txt("ch"),
-                    txt("name"),
-                )?;
+        let Some(event) = apply(&mut table, message, Instant::now()) else {
+            continue;
+        };
+        let (what, peer) = match event {
+            PeerEvent::Joined(peer) => ("joined", peer),
+            PeerEvent::Updated(peer) => ("updated", peer),
+            PeerEvent::Left(peer) => {
+                writeln!(out, "{at:6.1}s left {peer}")?;
+                continue;
             }
-            ServiceEvent::ServiceRemoved(_, fullname) => {
-                writeln!(out, "{at:6.1}s removed {fullname}")?
-            }
-            _ => {}
+        };
+        if let Some(peer) = table.get(peer) {
+            writeln!(
+                out,
+                "{at:6.1}s {what} {} \"{}\" ch {} at {}",
+                peer.id, peer.name, peer.channel, peer.addr
+            )?;
         }
     }
     Ok(())
