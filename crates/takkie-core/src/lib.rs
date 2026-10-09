@@ -7,6 +7,7 @@ mod ids;
 pub mod jitter;
 mod passphrase;
 pub mod protocol;
+pub mod ptt;
 
 pub use ids::{ChannelId, InvalidChannel, PeerId, Seq};
 pub use passphrase::{EmptyPassphrase, Passphrase};
