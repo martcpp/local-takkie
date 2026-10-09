@@ -10,7 +10,7 @@ publish.workspace = true
 arc-swap = "1"
 cpal = { workspace = true }
 crossbeam-channel = "0.5.17"
-local-ip-address = "0.6"
+if-addrs = "0.15"
 log = "0.4"
 mdns-sd = "0.21"
 opus = "0.4"

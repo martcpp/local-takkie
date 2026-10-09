@@ -1,3 +1,5 @@
+/// Choosing a peer's address.
+pub mod address;
 /// mDNS announcing and browsing.
 pub mod discovery;
 /// Peer news and the peer table.

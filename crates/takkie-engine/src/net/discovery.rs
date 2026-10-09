@@ -12,6 +12,7 @@ use mdns_sd::{IfKind, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo}
 use takkie_core::{ChannelId, PeerId};
 use thiserror::Error;
 
+use super::address::{LocalNet, best_address, local_networks};
 use super::peers::PeerMessage;
 
 /// The service every takkie announces.
@@ -79,13 +80,14 @@ pub fn properties(announcement: &Announcement) -> HashMap<String, String> {
     ])
 }
 
-/// Reads a peer's TXT record and addresses. `None` for another protocol
-/// version or a record we can't use.
+/// Reads a peer's TXT record and picks its address for our networks.
+/// `None` for another protocol version or a record we can't use.
 #[must_use]
 pub fn announced(
     txt: &HashMap<String, String>,
     addresses: impl IntoIterator<Item = Ipv4Addr>,
     port: u16,
+    ours: &[LocalNet],
 ) -> Option<PeerMessage> {
     if txt.get("v").map(String::as_str) != Some("1") {
         return None;
@@ -96,7 +98,7 @@ pub fn announced(
         .get("name")
         .map(|name| name.trim().chars().take(MAX_NAME).collect())
         .unwrap_or_default();
-    let ip = addresses.into_iter().next()?;
+    let ip = best_address(addresses, ours)?;
     Some(PeerMessage::Announced {
         sender,
         name,
@@ -118,6 +120,7 @@ fn txt(service: &ResolvedService) -> HashMap<String, String> {
 pub struct Discovery {
     daemon: ServiceDaemon,
     fullname: String,
+    id: PeerId,
 }
 
 impl Discovery {
@@ -142,13 +145,23 @@ impl Discovery {
         .enable_addr_auto();
         let fullname = info.get_fullname().to_string();
         daemon.register(info)?;
-        Ok(Self { daemon, fullname })
+        Ok(Self {
+            daemon,
+            fullname,
+            id: announcement.id,
+        })
     }
 
     /// Our full service name.
     #[must_use]
     pub fn fullname(&self) -> &str {
         &self.fullname
+    }
+
+    /// The id we announced.
+    #[must_use]
+    pub fn id(&self) -> PeerId {
+        self.id
     }
 
     /// The daemon, for browsing.
@@ -178,7 +191,8 @@ pub struct Browser {
 }
 
 impl Browser {
-    /// Browses for [`SERVICE`] on `discovery`'s daemon.
+    /// Browses for [`SERVICE`] on `discovery`'s daemon, skipping our own
+    /// record.
     ///
     /// # Errors
     /// [`DiscoveryError`] if browsing or the thread can't start.
@@ -187,6 +201,7 @@ impl Browser {
         peers: Sender<PeerMessage>,
     ) -> Result<Self, DiscoveryError> {
         let daemon = discovery.daemon().clone();
+        let me = discovery.id();
         let events = daemon.browse(SERVICE)?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
@@ -202,12 +217,16 @@ impl Browser {
                                 &txt(&service),
                                 service.get_addresses_v4(),
                                 service.get_port(),
+                                &local_networks(),
                             ) else {
                                 continue;
                             };
                             let PeerMessage::Announced { sender, .. } = &message else {
                                 continue;
                             };
+                            if *sender == me {
+                                continue;
+                            }
                             let fullname = service.get_fullname().to_string();
                             if let Some(old) = ids.insert(fullname, *sender)
                                 && old != *sender
@@ -308,7 +327,7 @@ mod tests {
     fn our_own_txt_record_reads_back() {
         let txt = properties(&kitchen());
         assert_eq!(
-            announced(&txt, [LAN], 40_000),
+            announced(&txt, [LAN], 40_000, &[]),
             Some(PeerMessage::Announced {
                 sender: ID,
                 name: "Kitchen".into(),
@@ -316,6 +335,21 @@ mod tests {
                 addr: SocketAddr::from((LAN, 40_000)),
             })
         );
+    }
+
+    #[test]
+    fn the_address_on_our_network_is_chosen() {
+        let ours = [LocalNet {
+            ip: Ipv4Addr::new(10, 0, 0, 2),
+            netmask: Ipv4Addr::new(255, 255, 255, 0),
+        }];
+        let addresses = [LAN, Ipv4Addr::new(10, 0, 0, 7), Ipv4Addr::LOCALHOST];
+        let Some(PeerMessage::Announced { addr, .. }) =
+            announced(&properties(&kitchen()), addresses, 40_000, &ours)
+        else {
+            unreachable!("the record is fine");
+        };
+        assert_eq!(addr, SocketAddr::from(([10, 0, 0, 7], 40_000)));
     }
 
     #[test]
@@ -331,25 +365,25 @@ mod tests {
             txt.remove(field);
             txt
         };
-        assert_eq!(announced(&with("v", "2"), [LAN], 1), None);
-        assert_eq!(announced(&without("v"), [LAN], 1), None);
-        assert_eq!(announced(&with("id", "kitchen"), [LAN], 1), None);
-        assert_eq!(announced(&without("id"), [LAN], 1), None);
-        assert_eq!(announced(&with("ch", "11"), [LAN], 1), None);
-        assert_eq!(announced(&with("ch", "-1"), [LAN], 1), None);
-        assert_eq!(announced(&good, [], 1), None);
+        assert_eq!(announced(&with("v", "2"), [LAN], 1, &[]), None);
+        assert_eq!(announced(&without("v"), [LAN], 1, &[]), None);
+        assert_eq!(announced(&with("id", "kitchen"), [LAN], 1, &[]), None);
+        assert_eq!(announced(&without("id"), [LAN], 1, &[]), None);
+        assert_eq!(announced(&with("ch", "11"), [LAN], 1, &[]), None);
+        assert_eq!(announced(&with("ch", "-1"), [LAN], 1, &[]), None);
+        assert_eq!(announced(&good, [], 1, &[]), None);
     }
 
     #[test]
     fn a_missing_or_long_name_is_still_usable() {
         let mut txt = properties(&kitchen());
         txt.remove("name");
-        let Some(PeerMessage::Announced { name, .. }) = announced(&txt, [LAN], 1) else {
+        let Some(PeerMessage::Announced { name, .. }) = announced(&txt, [LAN], 1, &[]) else {
             unreachable!("the rest of the record is fine");
         };
         assert_eq!(name, "");
         txt.insert("name".into(), "n".repeat(300));
-        let Some(PeerMessage::Announced { name, .. }) = announced(&txt, [LAN], 1) else {
+        let Some(PeerMessage::Announced { name, .. }) = announced(&txt, [LAN], 1, &[]) else {
             unreachable!("the rest of the record is fine");
         };
         assert_eq!(name.chars().count(), MAX_NAME);
