@@ -2,11 +2,12 @@
 //! encoded with Opus, on a thread of its own.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
+use takkie_core::dsp::Level;
 
 use super::codec::{CodecError, VoiceEncoder};
 use super::io::AudioSource;
@@ -87,6 +88,33 @@ impl Framer {
     }
 }
 
+/// The mic level, readable from the UI without locks.
+///
+/// Relaxed is enough: rms and peak are independent display values, so a
+/// reader mixing two frames only shows a slightly stale meter.
+#[derive(Debug, Default)]
+pub struct LevelMeter {
+    rms: AtomicU32,
+    peak: AtomicU32,
+}
+
+impl LevelMeter {
+    /// Publishes a frame's level.
+    pub fn set(&self, level: Level) {
+        self.rms.store(level.rms.to_bits(), Relaxed);
+        self.peak.store(level.peak.to_bits(), Relaxed);
+    }
+
+    /// The latest level.
+    #[must_use]
+    pub fn get(&self) -> Level {
+        Level {
+            rms: f32::from_bits(self.rms.load(Relaxed)),
+            peak: f32::from_bits(self.peak.load(Relaxed)),
+        }
+    }
+}
+
 /// Decides which frames go out while push-to-talk is held.
 #[derive(Debug, Default)]
 pub struct Gate {
@@ -113,7 +141,8 @@ pub struct TxThread {
 }
 
 impl TxThread {
-    /// Starts reading `source` and sending packets while `transmitting` is set.
+    /// Starts reading `source`, updating `level` every frame and sending
+    /// packets while `transmitting` is set.
     ///
     /// # Errors
     /// [`TxError`] for an unusable mic rate, an encoder that won't start, or
@@ -121,6 +150,7 @@ impl TxThread {
     pub fn spawn(
         mut source: Box<dyn AudioSource>,
         transmitting: Arc<AtomicBool>,
+        level: Arc<LevelMeter>,
         events: Sender<TxEvent>,
     ) -> Result<Self, TxError> {
         let mut framer = Framer::new(source.sample_rate())?;
@@ -134,6 +164,7 @@ impl TxThread {
                 while !stopping.load(Relaxed) {
                     match framer.next(source.as_mut()) {
                         Ok(Some(samples)) => {
+                            level.set(Level::of(samples));
                             let Some(mark) = gate.pass(transmitting.load(Relaxed)) else {
                                 continue;
                             };
@@ -272,7 +303,9 @@ mod tests {
         source.advance_ms(200);
         let transmitting = Arc::new(AtomicBool::new(true));
         let (sender, events) = unbounded();
-        let thread = TxThread::spawn(Box::new(source), Arc::clone(&transmitting), sender).unwrap();
+        let level = Arc::new(LevelMeter::default());
+        let thread =
+            TxThread::spawn(Box::new(source), Arc::clone(&transmitting), level, sender).unwrap();
         let packets: Vec<TxPacket> = (0..10)
             .map(
                 |_| match events.recv_timeout(Duration::from_secs(5)).unwrap() {
@@ -290,5 +323,45 @@ mod tests {
         );
         assert_eq!(packets[9].timestamp, 9 * FRAME as u32);
         assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn meter_round_trips_a_level() {
+        let meter = LevelMeter::default();
+        assert_eq!(meter.get(), Level::default());
+        let level = Level {
+            rms: 0.25,
+            peak: 0.75,
+        };
+        meter.set(level);
+        assert_eq!(meter.get(), level);
+    }
+
+    #[test]
+    fn level_follows_the_input_even_when_not_transmitting() {
+        let mut source = tone(48_000);
+        source.advance_ms(100);
+        let (sender, events) = unbounded();
+        let level = Arc::new(LevelMeter::default());
+        let thread = TxThread::spawn(
+            Box::new(source),
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&level),
+            sender,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while level.get().peak == 0.0 && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        drop(thread);
+        let measured = level.get();
+        assert!((measured.peak - 0.5).abs() < 0.02, "peak {}", measured.peak);
+        assert!(
+            (measured.rms - 0.5 / 2.0_f32.sqrt()).abs() < 0.02,
+            "rms {}",
+            measured.rms
+        );
+        assert!(events.try_recv().is_err());
     }
 }
