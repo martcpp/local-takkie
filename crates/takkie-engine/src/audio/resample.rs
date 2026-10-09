@@ -1,5 +1,5 @@
-//! Converts between a device's rate and 48 kHz, in 20 ms frames. A device
-//! already at 48 kHz skips it.
+//! Converts between a device's rate and 48 kHz, in 20 ms frames, both ways.
+//! A device already at 48 kHz skips it.
 
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Resampler as _, ResamplerConstructionError};
@@ -48,6 +48,14 @@ impl Resampler {
     /// [`ResampleError::Setup`] if rubato can't handle the rate.
     pub fn capture(device_rate: u32) -> Result<Self, ResampleError> {
         Self::new(device_rate, PREFERRED_RATE, FixedSync::Output)
+    }
+
+    /// One 48 kHz [`FRAME`] in per call, device rate out.
+    ///
+    /// # Errors
+    /// [`ResampleError::Setup`] if rubato can't handle the rate.
+    pub fn playback(device_rate: u32) -> Result<Self, ResampleError> {
+        Self::new(PREFERRED_RATE, device_rate, FixedSync::Input)
     }
 
     fn new(from: u32, to: u32, fixed: FixedSync) -> Result<Self, ResampleError> {
@@ -185,6 +193,39 @@ mod tests {
         let resampler = Resampler::capture(48_000).unwrap();
         assert_eq!(resampler.input_needed(), FRAME);
         let output = run(resampler, &input);
+        assert_eq!(output, input[..output.len()]);
+    }
+
+    #[test]
+    fn playback_48k_to_44k1_keeps_the_frequency() {
+        let output = run(
+            Resampler::playback(44_100).unwrap(),
+            &sine(48_000, 1_000.0, 1.0),
+        );
+        assert!(output.len() > 40_000);
+        assert_close(frequency(&output, 44_100), 1_000.0);
+    }
+
+    #[test]
+    fn playback_48k_to_16k_keeps_the_frequency() {
+        let output = run(
+            Resampler::playback(16_000).unwrap(),
+            &sine(48_000, 440.0, 1.0),
+        );
+        assert_close(frequency(&output, 16_000), 440.0);
+    }
+
+    #[test]
+    fn playback_takes_one_frame_per_call() {
+        let resampler = Resampler::playback(44_100).unwrap();
+        assert_eq!(resampler.input_needed(), FRAME);
+        assert!(resampler.output_max() >= FRAME * 44_100 / 48_000);
+    }
+
+    #[test]
+    fn playback_at_48k_is_a_straight_copy() {
+        let input = sine(48_000, 500.0, 0.1);
+        let output = run(Resampler::playback(48_000).unwrap(), &input);
         assert_eq!(output, input[..output.len()]);
     }
 
