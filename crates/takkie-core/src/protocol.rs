@@ -417,4 +417,33 @@ mod tests {
         assert!(Flags::NONE.contains(Flags::NONE));
         assert_eq!(Flags::default(), Flags::NONE);
     }
+
+    #[test]
+    fn spec_examples_match_the_encoder() {
+        let spec = include_str!("../../../docs/protocol.md");
+        let audio = Header {
+            kind: PacketKind::Audio,
+            channel: ChannelId::try_from(3).unwrap(),
+            flags: Flags::NONE,
+            sender: PeerId::new(0x0102_0304_0506_0708),
+            seq: Seq::new(0x0A0B_0C0D),
+            timestamp: 0x1122_3344,
+        };
+        let hello = Header {
+            kind: PacketKind::Hello,
+            channel: ChannelId::MAX,
+            flags: Flags::NONE,
+            sender: PeerId::new(u64::MAX),
+            seq: Seq::new(u32::MAX),
+            timestamp: 0,
+        };
+        for header in [audio, hello] {
+            let hex: Vec<String> = encoded(&header)
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect();
+            let hex = hex.join(" ");
+            assert!(spec.contains(&hex), "docs/protocol.md is missing {hex}");
+        }
+    }
 }
