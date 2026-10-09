@@ -2,6 +2,8 @@
 
 /// Microphone capture and speaker playback, with Opus.
 pub mod audio;
+/// The new transport, discovery and peers.
+pub mod net;
 /// UDP transport and mDNS discovery.
 pub mod network;
 
