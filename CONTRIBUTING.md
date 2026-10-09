@@ -42,6 +42,15 @@ cargo xtask ci
 It runs what CI runs: formatting, clippy with `-D warnings`, the tests and
 cargo-deny. It has to pass.
 
+CI also measures test coverage of `takkie-core` (the goal is 90% of lines).
+To see it locally:
+
+```bash
+rustup component add llvm-tools-preview
+cargo install --locked cargo-llvm-cov
+cargo llvm-cov -p takkie-core --summary-only
+```
+
 ## Code rules
 
 The short version of [ROADMAP.md section 5](ROADMAP.md#5-rust-engineering-standards):

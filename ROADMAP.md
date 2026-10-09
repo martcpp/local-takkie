@@ -544,6 +544,7 @@ hotfix/0.2.1-crash      ─────────────────PR─
 |---|---|---|
 | `check` | Ubuntu, Windows, macOS | `fmt --check` · `clippy -D warnings` · `nextest` · build `takkie` |
 | `deny` | Ubuntu | `cargo deny check` |
+| `coverage` | Ubuntu | `cargo llvm-cov` for `takkie-core`; warns below 90% (E5.8) |
 | `gui` | Ubuntu, Windows, macOS | Build the Tauri app (only when `apps/` changes; from M3) |
 | `android` | Ubuntu | Build the APK (from M4) |
 | `fuzz` | Ubuntu, nightly schedule | 10 minutes per fuzz target |
