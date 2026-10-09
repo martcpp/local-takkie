@@ -6,14 +6,35 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{
-    BuildStreamError, FromSample, PlayStreamError, Sample, SampleFormat, SizedSample, Stream,
-    SupportedStreamConfig,
+    BuildStreamError, FromSample, I24, PlayStreamError, Sample, SampleFormat, SizedSample, Stream,
+    SupportedStreamConfig, U24,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
 
 use super::config::StreamSettings;
 use super::io::{AudioSink, AudioSource};
+
+// SampleFormat is non-exhaustive, so formats added later become an error.
+macro_rules! by_format {
+    ($format:expr, $open:ident($($arg:expr),*)) => {
+        match $format {
+            SampleFormat::I8 => Self::$open::<i8>($($arg),*),
+            SampleFormat::I16 => Self::$open::<i16>($($arg),*),
+            SampleFormat::I24 => Self::$open::<I24>($($arg),*),
+            SampleFormat::I32 => Self::$open::<i32>($($arg),*),
+            SampleFormat::I64 => Self::$open::<i64>($($arg),*),
+            SampleFormat::U8 => Self::$open::<u8>($($arg),*),
+            SampleFormat::U16 => Self::$open::<u16>($($arg),*),
+            SampleFormat::U24 => Self::$open::<U24>($($arg),*),
+            SampleFormat::U32 => Self::$open::<u32>($($arg),*),
+            SampleFormat::U64 => Self::$open::<u64>($($arg),*),
+            SampleFormat::F32 => Self::$open::<f32>($($arg),*),
+            SampleFormat::F64 => Self::$open::<f64>($($arg),*),
+            other => Err(OpenError::Format(other)),
+        }
+    };
+}
 
 /// Counters the callbacks update, readable from any thread.
 #[derive(Debug, Default)]
@@ -35,7 +56,7 @@ pub enum OpenError {
     /// cpal couldn't start it.
     #[error("couldn't start the audio stream: {0}")]
     Play(#[from] PlayStreamError),
-    /// A sample format we don't handle.
+    /// A sample format newer than this code.
     #[error("the device uses {0} samples, which aren't supported")]
     Format(SampleFormat),
 }
@@ -103,10 +124,7 @@ impl CpalSource {
     /// # Errors
     /// [`OpenError`] if the stream can't be built or started.
     pub fn open(device: &cpal::Device, config: &SupportedStreamConfig) -> Result<Self, OpenError> {
-        match config.sample_format() {
-            SampleFormat::F32 => Self::open_as::<f32>(device, config),
-            other => Err(OpenError::Format(other)),
-        }
+        by_format!(config.sample_format(), open_as(device, config))
     }
 
     fn open_as<T>(device: &cpal::Device, config: &SupportedStreamConfig) -> Result<Self, OpenError>
@@ -174,10 +192,7 @@ impl CpalSink {
     /// # Errors
     /// [`OpenError`] if the stream can't be built or started.
     pub fn open(device: &cpal::Device, config: &SupportedStreamConfig) -> Result<Self, OpenError> {
-        match config.sample_format() {
-            SampleFormat::F32 => Self::open_as::<f32>(device, config),
-            other => Err(OpenError::Format(other)),
-        }
+        by_format!(config.sample_format(), open_as(device, config))
     }
 
     fn open_as<T>(device: &cpal::Device, config: &SupportedStreamConfig) -> Result<Self, OpenError>
@@ -284,6 +299,59 @@ mod tests {
         assert_eq!(drain(&mut consumer).len(), 2);
         capture(&[0.1_f32; 2], 1, &mut producer, &dropped);
         assert_eq!(dropped.load(Relaxed), 3);
+    }
+
+    fn round_trip<T>()
+    where
+        T: SizedSample + FromSample<f32> + std::fmt::Debug,
+        f32: FromSample<T>,
+    {
+        let (mut producer, mut consumer) = RingBuffer::new(8);
+        let counter = AtomicU64::new(0);
+        capture(
+            &[
+                T::EQUILIBRIUM,
+                T::from_sample(1.0_f32),
+                T::from_sample(-1.0_f32),
+            ],
+            1,
+            &mut producer,
+            &counter,
+        );
+        let captured = drain(&mut consumer);
+        assert_eq!(captured[0], 0.0, "{:?} silence", T::EQUILIBRIUM);
+        assert!(
+            (captured[1] - 1.0).abs() < 0.01,
+            "{:?} full scale",
+            T::EQUILIBRIUM
+        );
+        assert!(
+            (captured[2] + 1.0).abs() < 0.01,
+            "{:?} negative full scale",
+            T::EQUILIBRIUM
+        );
+
+        let (mut producer, mut consumer) = RingBuffer::new(8);
+        producer.push(0.0).unwrap();
+        let mut out = [T::from_sample(0.5_f32); 1];
+        playback(&mut out, 1, &mut consumer, &counter);
+        assert_eq!(out[0], T::EQUILIBRIUM);
+    }
+
+    #[test]
+    fn every_sample_format_converts_both_ways() {
+        round_trip::<i8>();
+        round_trip::<i16>();
+        round_trip::<I24>();
+        round_trip::<i32>();
+        round_trip::<i64>();
+        round_trip::<u8>();
+        round_trip::<u16>();
+        round_trip::<U24>();
+        round_trip::<u32>();
+        round_trip::<u64>();
+        round_trip::<f32>();
+        round_trip::<f64>();
     }
 
     fn ring(samples: &[f32]) -> Consumer<f32> {
