@@ -1,6 +1,7 @@
 //! Announcing ourselves over mDNS, so peers on the LAN can find us.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 use takkie_core::{ChannelId, PeerId};
@@ -11,6 +12,7 @@ pub const SERVICE: &str = "_takkie._udp.local.";
 
 const MAX_NAME: usize = 64;
 const MAX_LABEL: usize = 63;
+const GOODBYE_WAIT: Duration = Duration::from_secs(1);
 
 /// An mDNS failure.
 #[derive(Debug, Error)]
@@ -64,7 +66,8 @@ pub fn properties(announcement: &Announcement) -> HashMap<String, String> {
     ])
 }
 
-/// Our mDNS presence. One daemon, kept as long as this lives.
+/// Our mDNS presence. One daemon, kept as long as this lives; dropping it
+/// says goodbye so peers see us leave straight away.
 pub struct Discovery {
     daemon: ServiceDaemon,
     fullname: String,
@@ -105,6 +108,17 @@ impl Discovery {
     #[must_use]
     pub fn daemon(&self) -> &ServiceDaemon {
         &self.daemon
+    }
+}
+
+impl Drop for Discovery {
+    fn drop(&mut self) {
+        if let Ok(done) = self.daemon.unregister(&self.fullname) {
+            let _ = done.recv_timeout(GOODBYE_WAIT);
+        }
+        if let Ok(done) = self.daemon.shutdown() {
+            let _ = done.recv_timeout(GOODBYE_WAIT);
+        }
     }
 }
 
