@@ -5,6 +5,7 @@
 
 mod ids;
 mod passphrase;
+pub mod protocol;
 
 pub use ids::{ChannelId, InvalidChannel, PeerId, Seq};
 pub use passphrase::{EmptyPassphrase, Passphrase};
