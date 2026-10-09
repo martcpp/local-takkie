@@ -1,0 +1,37 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.1", features = [] }
+tauri-plugin-log = "2"
+cpal = "0.17"
+rtrb = "0.3"
+arc-swap = "1"
+crossbeam-channel = "0.5"
+takkie-core = { path = "../../../crates/takkie-core" }
+takkie-engine = { path = "../../../crates/takkie-engine" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9", features = ["audio", "api-level-28"] }
+
+# Its own workspace: the spike is never part of the main build.
+[workspace]
