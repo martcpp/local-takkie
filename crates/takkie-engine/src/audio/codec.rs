@@ -1,7 +1,7 @@
 //! Opus with the settings from ROADMAP 3.4: mono, 48 kHz, 20 ms frames,
 //! VoIP mode, 24 kbit/s, in-band FEC for 10% expected loss.
 
-use opus::{Application, Bitrate, Channels, Encoder};
+use opus::{Application, Bitrate, Channels, Decoder, Encoder};
 use thiserror::Error;
 
 /// Opus's largest packet.
@@ -44,6 +44,31 @@ impl VoiceEncoder {
     }
 }
 
+/// Decodes one sender's Opus packets into 48 kHz mono frames.
+pub struct VoiceDecoder {
+    inner: Decoder,
+}
+
+impl VoiceDecoder {
+    /// A decoder for one sender.
+    ///
+    /// # Errors
+    /// [`CodecError`] if libopus can't create it.
+    pub fn new() -> Result<Self, CodecError> {
+        Ok(Self {
+            inner: Decoder::new(48_000, Channels::Mono)?,
+        })
+    }
+
+    /// Decodes `packet` into `out` and returns the samples written.
+    ///
+    /// # Errors
+    /// [`CodecError`] if the packet is corrupt or `out` is too small.
+    pub fn decode(&mut self, packet: &[u8], out: &mut [f32]) -> Result<usize, CodecError> {
+        Ok(self.inner.decode_float(packet, out, false)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::f32::consts::TAU;
@@ -66,6 +91,16 @@ mod tests {
         }
         let average = total / 50;
         assert!((40..=80).contains(&average), "{average} bytes per packet");
+    }
+
+    #[test]
+    fn decoding_gives_back_a_whole_frame() {
+        let mut encoder = VoiceEncoder::new().unwrap();
+        let mut decoder = VoiceDecoder::new().unwrap();
+        let mut out = [0.0; FRAME];
+        let packet = encoder.encode(&[0.1; FRAME]).unwrap().to_vec();
+        assert_eq!(decoder.decode(&packet, &mut out).unwrap(), FRAME);
+        assert!(decoder.decode(&[0xFF; 3], &mut out).is_err());
     }
 
     #[test]

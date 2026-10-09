@@ -2,10 +2,14 @@
 pub mod codec;
 /// Stream config negotiation.
 pub mod config;
+/// Device listing.
+pub mod devices;
 /// Fake devices for tests.
 pub mod fake;
 /// The hardware boundary.
 pub mod io;
+/// The receiving mixer.
+pub mod mix;
 /// Speaker side: decodes received Opus packets and plays them.
 pub mod rad;
 /// Rate conversion to and from 48 kHz.
