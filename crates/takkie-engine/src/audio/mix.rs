@@ -56,6 +56,7 @@ pub struct MixCounters {
 pub struct MixControls {
     volume: AtomicU32,
     muted: AtomicBool,
+    half_duplex: AtomicBool,
 }
 
 impl Default for MixControls {
@@ -63,6 +64,7 @@ impl Default for MixControls {
         Self {
             volume: AtomicU32::new(1.0_f32.to_bits()),
             muted: AtomicBool::new(false),
+            half_duplex: AtomicBool::new(true),
         }
     }
 }
@@ -94,6 +96,18 @@ impl MixControls {
     pub fn is_muted(&self) -> bool {
         self.muted.load(Relaxed)
     }
+
+    /// Whether playback goes quiet while we transmit. On by default, like a
+    /// walkie-talkie, and it stops the speaker echoing into the mic.
+    pub fn set_half_duplex(&self, on: bool) {
+        self.half_duplex.store(on, Relaxed);
+    }
+
+    /// Whether half-duplex is on.
+    #[must_use]
+    pub fn is_half_duplex(&self) -> bool {
+        self.half_duplex.load(Relaxed)
+    }
 }
 
 /// Every sender's buffer and decoder, mixed one frame at a time.
@@ -102,17 +116,25 @@ pub struct Mixer {
     frame: Vec<f32>,
     counters: Arc<MixCounters>,
     controls: Arc<MixControls>,
+    transmitting: Arc<AtomicBool>,
 }
 
 impl Mixer {
-    /// A mixer with no senders yet.
+    /// A mixer with no senders yet, never transmitting.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_transmitting(Arc::default())
+    }
+
+    /// A mixer that follows the same push-to-talk flag as the tx thread.
+    #[must_use]
+    pub fn with_transmitting(transmitting: Arc<AtomicBool>) -> Self {
         Self {
             talkers: HashMap::new(),
             frame: vec![0.0; FRAME],
             counters: Arc::default(),
             controls: Arc::default(),
+            transmitting,
         }
     }
 
@@ -187,7 +209,7 @@ impl Mixer {
 
     /// Mixes the next 20 ms from every sender into `out`, covering lost
     /// frames with FEC when the next packet is here and concealment if not,
-    /// then applies volume, the limiter and mute.
+    /// then applies volume, the limiter, mute and half-duplex.
     pub fn tick(&mut self, now: Instant, out: &mut [f32]) {
         out.fill(0.0);
         let frame = &mut self.frame;
@@ -231,7 +253,8 @@ impl Mixer {
         }
         apply_gain(out, self.controls.volume());
         soft_limit(out);
-        if self.controls.is_muted() {
+        let talking_over = self.controls.is_half_duplex() && self.transmitting.load(Relaxed);
+        if self.controls.is_muted() || talking_over {
             out.fill(0.0);
         }
     }
@@ -321,16 +344,18 @@ pub struct MixThread {
 }
 
 impl MixThread {
-    /// Starts mixing `packets` into `sink`.
+    /// Starts mixing `packets` into `sink`, going quiet while
+    /// `transmitting` if half-duplex is on.
     ///
     /// # Errors
     /// [`MixError`] for an unusable speaker rate, or if the thread can't start.
     pub fn spawn(
         packets: Receiver<RxPacket>,
         mut sink: Box<dyn AudioSink>,
+        transmitting: Arc<AtomicBool>,
     ) -> Result<Self, MixError> {
         let mut pacer = Pacer::new(sink.sample_rate())?;
-        let mut mixer = Mixer::new();
+        let mut mixer = Mixer::with_transmitting(transmitting);
         let counters = mixer.counters();
         let controls = mixer.controls();
         let stop = Arc::new(AtomicBool::new(false));
@@ -727,5 +752,55 @@ mod tests {
         let mut out = vec![0.0; FRAME];
         mixer.tick(Instant::now() + Duration::from_secs(1), &mut out);
         assert!(mixer.talking().is_empty());
+    }
+
+    fn speaker(mixer: &mut Mixer, transmitting: &AtomicBool, talk_from: usize) -> Vec<f32> {
+        use crate::audio::fake::FakeSink;
+
+        let sent = packets(440.0, 30);
+        let mut pacer = Pacer::new(48_000).unwrap();
+        let mut sink = FakeSink::new(48_000, 48_000 / 5);
+        let t0 = Instant::now();
+        for (tick, payload) in sent.iter().enumerate() {
+            let now = t0 + Duration::from_millis(20 * tick as u64);
+            transmitting.store(tick >= talk_from && tick < talk_from + 10, Relaxed);
+            mixer.receive(rx(1, tick, payload), now).unwrap();
+            pacer.fill(mixer, &mut sink, now).unwrap();
+            sink.play(FRAME);
+        }
+        sink.played().to_vec()
+    }
+
+    fn frame_rms(samples: &[f32], frame: usize) -> f32 {
+        rms(&samples[frame * FRAME..(frame + 1) * FRAME])
+    }
+
+    #[test]
+    fn half_duplex_silences_the_speaker_while_transmitting() {
+        let transmitting = Arc::new(AtomicBool::new(false));
+        let mut mixer = Mixer::with_transmitting(Arc::clone(&transmitting));
+        let played = speaker(&mut mixer, &transmitting, 10);
+        assert!(frame_rms(&played, 8) > 0.01);
+        assert!((12..18).all(|f| frame_rms(&played, f) == 0.0));
+        assert!(frame_rms(&played, 24) > 0.01);
+        assert!(mixer.controls().is_half_duplex());
+    }
+
+    #[test]
+    fn decoding_continues_while_transmitting() {
+        let transmitting = Arc::new(AtomicBool::new(false));
+        let mut mixer = Mixer::with_transmitting(Arc::clone(&transmitting));
+        speaker(&mut mixer, &transmitting, 10);
+        assert_eq!(mixer.counters().silenced.load(Relaxed), 0);
+        assert_eq!(mixer.counters().concealed.load(Relaxed), 0);
+    }
+
+    #[test]
+    fn full_duplex_keeps_playing_while_transmitting() {
+        let transmitting = Arc::new(AtomicBool::new(false));
+        let mut mixer = Mixer::with_transmitting(Arc::clone(&transmitting));
+        mixer.controls().set_half_duplex(false);
+        let played = speaker(&mut mixer, &transmitting, 10);
+        assert!((12..18).all(|f| frame_rms(&played, f) > 0.01));
     }
 }
