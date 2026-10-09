@@ -31,6 +31,21 @@ use crate::net::send::{PacketSender, SendCounters, SendThread};
 use crate::net::{Transport, UdpTransport};
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Tuning {
+    pub(crate) hello_every: Duration,
+    pub(crate) peer_timeout: Duration,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            hello_every: HELLO_EVERY,
+            peer_timeout: PEER_TIMEOUT,
+        }
+    }
+}
 const TALK_CHECK_EVERY: Duration = Duration::from_millis(50);
 
 /// How to start an [`Engine`].
@@ -254,7 +269,13 @@ impl Engine {
             port: config.port,
             source,
         })?;
-        Self::start_with(config, CpalOpener, Arc::new(transport), true)
+        Self::start_with(
+            config,
+            CpalOpener,
+            Arc::new(transport),
+            true,
+            Tuning::default(),
+        )
     }
 
     pub(crate) fn start_with<O: DeviceOpener + 'static>(
@@ -262,6 +283,7 @@ impl Engine {
         opener: O,
         transport: Arc<dyn Transport>,
         mdns: bool,
+        tuning: Tuning,
     ) -> Result<(Self, Receiver<EngineEvent>), EngineError> {
         let id = new_id();
         let port = transport.local_addr().port();
@@ -278,7 +300,11 @@ impl Engine {
         let (packets_in, packets) = unbounded();
         let (news_in, news) = unbounded();
         let (peer_events_in, peer_events) = unbounded();
-        let table = Peers::new(Arc::clone(&channel), Arc::clone(&targets), PEER_TIMEOUT);
+        let table = Peers::new(
+            Arc::clone(&channel),
+            Arc::clone(&targets),
+            tuning.peer_timeout,
+        );
         let peer_view = table.view();
         let peers = PeerThread::spawn(
             news,
@@ -364,7 +390,8 @@ impl Engine {
         let hello = HelloThread::spawn(
             sender,
             &config.display_name,
-            HELLO_EVERY,
+            tuning.hello_every,
+            Arc::clone(&shared.peers),
             config.static_peers,
         )
         .map_err(EngineError::Thread)?;
@@ -589,6 +616,7 @@ mod tests {
 
     const RATE: u32 = 48_000;
     const AMPLITUDE: f32 = 0.4;
+    const DRAINED_MS: u64 = 600;
 
     struct Fakes {
         mic: Signal,
@@ -645,7 +673,11 @@ mod tests {
             static_peers,
             ..EngineConfig::default()
         };
-        let (engine, events) = Engine::start_with(config, fakes, transport, false).unwrap();
+        let fast = Tuning {
+            hello_every: Duration::from_millis(100),
+            peer_timeout: Duration::from_secs(1),
+        };
+        let (engine, events) = Engine::start_with(config, fakes, transport, false, fast).unwrap();
         Node {
             engine,
             events,
@@ -711,7 +743,7 @@ mod tests {
 
         b.engine.set_muted(false);
         b.engine.set_channel(ChannelId::try_from(4).unwrap());
-        after(400);
+        after(DRAINED_MS);
         let heard = level(&b.speaker);
         assert!(heard < 0.01, "B on channel 4 heard {heard}");
 
@@ -721,9 +753,33 @@ mod tests {
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
 
         a.engine.set_transmitting(false);
-        after(400);
+        after(DRAINED_MS);
         let heard = level(&b.speaker);
         assert!(heard < 0.01, "B heard {heard} after A let go");
+    }
+
+    #[test]
+    fn audio_comes_back_after_a_channel_switch_longer_than_the_peer_timeout() {
+        let network = MemoryNetwork::new();
+        let b = node(&network, "B", Vec::new());
+        let a = node(&network, "A", vec![b.addr]);
+        a.engine.set_transmitting(true);
+        after(1_500);
+        let heard = level(&b.speaker);
+        assert!(heard > 0.1, "B heard {heard} before switching");
+
+        b.engine.set_channel(ChannelId::try_from(4).unwrap());
+        after(3_000);
+        let heard = level(&b.speaker);
+        assert!(heard < 0.01, "B on channel 4 heard {heard}");
+        let away = b.engine.snapshot();
+        assert_eq!(away.peers.len(), 1);
+        assert_eq!(away.peers[0].channel.get(), 3);
+
+        b.engine.set_channel(ChannelId::try_from(3).unwrap());
+        after(1_500);
+        let heard = level(&b.speaker);
+        assert!(heard > 0.1, "B back on channel 3 heard {heard}");
     }
 
     #[test]

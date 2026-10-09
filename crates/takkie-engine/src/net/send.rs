@@ -82,12 +82,6 @@ impl PacketSender {
         Arc::clone(&self.counters)
     }
 
-    /// Whether `addr` is on the current send list.
-    #[must_use]
-    pub fn is_target(&self, addr: SocketAddr) -> bool {
-        self.peers.load().contains(&addr)
-    }
-
     /// Sends one packet to every peer on our channel.
     pub fn send(&self, kind: PacketKind, flags: Flags, timestamp: u32, payload: &[u8]) {
         let peers = self.peers.load();

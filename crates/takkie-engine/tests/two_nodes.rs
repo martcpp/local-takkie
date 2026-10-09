@@ -90,17 +90,25 @@ fn node(id: u64, channel: u8, talking: bool, static_peers: Vec<SocketAddr>) -> N
     )
     .unwrap();
     let (events, _) = unbounded();
+    let table = Peers::new(channel, targets, PEER_TIMEOUT);
+    let known = table.view();
     let peers = PeerThread::spawn(
         news_out,
-        Peers::new(channel, targets, PEER_TIMEOUT),
+        table,
         PeerOutputs {
             events,
             mixer: audio,
         },
     )
     .unwrap();
-    let hello =
-        HelloThread::spawn(sender, "node", Duration::from_millis(200), static_peers).unwrap();
+    let hello = HelloThread::spawn(
+        sender,
+        "node",
+        Duration::from_millis(200),
+        known,
+        static_peers,
+    )
+    .unwrap();
     Node {
         addr,
         speaker,
