@@ -67,6 +67,22 @@ impl VoiceDecoder {
     pub fn decode(&mut self, packet: &[u8], out: &mut [f32]) -> Result<usize, CodecError> {
         Ok(self.inner.decode_float(packet, out, false)?)
     }
+
+    /// Rebuilds the lost frame before `next` from the FEC data it carries.
+    ///
+    /// # Errors
+    /// [`CodecError`] if `next` is corrupt or `out` is too small.
+    pub fn decode_fec(&mut self, next: &[u8], out: &mut [f32]) -> Result<usize, CodecError> {
+        Ok(self.inner.decode_float(next, out, true)?)
+    }
+
+    /// Guesses a lost frame from what came before (packet loss concealment).
+    ///
+    /// # Errors
+    /// [`CodecError`] if `out` is too small.
+    pub fn conceal(&mut self, out: &mut [f32]) -> Result<usize, CodecError> {
+        Ok(self.inner.decode_float(&[], out, false)?)
+    }
 }
 
 #[cfg(test)]

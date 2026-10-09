@@ -53,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let (packets, received) = unbounded();
     let mix = MixThread::spawn(received, Box::new(sink))?;
+    let lost = mix.counters();
 
     let start = Instant::now();
     let mut next_report = start + Duration::from_secs(1);
@@ -78,8 +79,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let bar = "#".repeat((now.peak * 40.0).min(40.0) as usize);
             writeln!(
                 out,
-                "{:>3}s  level {bar:<40} | packets {seq:>5} | mic dropped {} | speaker underruns {} | errors {}",
+                "{:>3}s  level {bar:<40} | packets {seq:>5} | lost {} | mic dropped {} | speaker underruns {} | errors {}",
                 start.elapsed().as_secs(),
+                lost.recovered.load(Relaxed)
+                    + lost.concealed.load(Relaxed)
+                    + lost.silenced.load(Relaxed),
                 mic_counters.dropped.load(Relaxed),
                 speaker_counters.underruns.load(Relaxed),
                 mic_counters.errors.load(Relaxed) + speaker_counters.errors.load(Relaxed),
