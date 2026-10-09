@@ -12,7 +12,7 @@ cpal = { workspace = true }
 crossbeam-channel = "0.5.17"
 local-ip-address = "0.6"
 log = "0.4"
-mdns-sd = "0.20.0"
+mdns-sd = "0.21"
 opus = "0.4"
 rtrb = "0.4"
 rubato = "5.0.1"
