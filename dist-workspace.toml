@@ -17,7 +17,6 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
-pr-run-mode = "skip"
 # release.yml has its actions pinned to commits by hand (kept current by
 # Dependabot); re-pin after regenerating it.
 allow-dirty = ["ci"]
