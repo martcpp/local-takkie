@@ -2,6 +2,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod dsp;
 mod ids;
 pub mod jitter;
 mod passphrase;
