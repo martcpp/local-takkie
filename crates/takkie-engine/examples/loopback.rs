@@ -45,14 +45,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mic_counters, speaker_counters) = (source.counters(), sink.counters());
     let level = Arc::new(LevelMeter::default());
     let (tx_events, events) = unbounded();
+    let transmitting = Arc::new(AtomicBool::new(true));
     let tx = TxThread::spawn(
         Box::new(source),
-        Arc::new(AtomicBool::new(true)),
+        Arc::clone(&transmitting),
         Arc::clone(&level),
         tx_events,
     )?;
     let (packets, received) = unbounded();
-    let mix = MixThread::spawn(received, Box::new(sink))?;
+    let mix = MixThread::spawn(received, Box::new(sink), transmitting)?;
+    mix.controls().set_half_duplex(false);
     let lost = mix.counters();
 
     let start = Instant::now();
