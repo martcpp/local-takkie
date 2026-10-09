@@ -2,6 +2,8 @@
 pub mod address;
 /// mDNS announcing and browsing.
 pub mod discovery;
+/// Hello and Bye.
+pub mod hello;
 /// Peer news and the peer table.
 pub mod peers;
 /// The receiving thread.
