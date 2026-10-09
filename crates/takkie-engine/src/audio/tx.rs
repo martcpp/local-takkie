@@ -1,5 +1,5 @@
-//! The sending side: mic samples to 48 kHz frames, gated by push-to-talk,
-//! on a thread of its own.
+//! The sending side: mic samples to 48 kHz frames, gated by push-to-talk and
+//! encoded with Opus, on a thread of its own.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
@@ -8,18 +8,37 @@ use std::time::Duration;
 
 use crossbeam_channel::Sender;
 
+use super::codec::{CodecError, VoiceEncoder};
 use super::io::AudioSource;
 use super::resample::{FRAME, ResampleError, Resampler};
 
-/// A 20 ms frame to send.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TxFrame {
-    /// 960 mono samples at 48 kHz.
-    pub samples: Vec<f32>,
-    /// Position of the first sample, in 48 kHz samples since start.
+/// Where a sent frame sits in the stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mark {
+    /// Position of its first sample, in 48 kHz samples since start.
     pub timestamp: u32,
     /// Last frame of a push-to-talk press.
     pub end: bool,
+}
+
+/// One encoded 20 ms frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TxPacket {
+    /// The Opus packet.
+    pub payload: Vec<u8>,
+    /// Position of its first sample, in 48 kHz samples since start.
+    pub timestamp: u32,
+    /// Last packet of a push-to-talk press.
+    pub end: bool,
+}
+
+/// What the tx thread reports.
+#[derive(Debug)]
+pub enum TxEvent {
+    /// A packet to send.
+    Packet(TxPacket),
+    /// A frame that couldn't be encoded; the thread carries on.
+    Error(CodecError),
 }
 
 /// Cuts mic input into whole 48 kHz frames.
@@ -76,19 +95,14 @@ pub struct Gate {
 }
 
 impl Gate {
-    /// Passes `samples` on while `transmitting`, plus one final frame marked
+    /// Lets frames through while `transmitting`, plus one final frame marked
     /// `end` after release. Every frame moves the timestamp on.
-    pub fn pass(&mut self, samples: &[f32], transmitting: bool) -> Option<TxFrame> {
+    pub fn pass(&mut self, transmitting: bool) -> Option<Mark> {
         let timestamp = self.timestamp;
         self.timestamp = self.timestamp.wrapping_add(FRAME as u32);
         let end = self.open && !transmitting;
-        let send = transmitting || end;
         self.open = transmitting;
-        send.then(|| TxFrame {
-            samples: samples.to_vec(),
-            timestamp,
-            end,
-        })
+        (transmitting || end).then_some(Mark { timestamp, end })
     }
 }
 
@@ -99,16 +113,18 @@ pub struct TxThread {
 }
 
 impl TxThread {
-    /// Starts reading `source` and sending frames while `transmitting` is set.
+    /// Starts reading `source` and sending packets while `transmitting` is set.
     ///
     /// # Errors
-    /// [`TxError`] for an unusable mic rate, or if the thread can't start.
+    /// [`TxError`] for an unusable mic rate, an encoder that won't start, or
+    /// a thread that won't start.
     pub fn spawn(
         mut source: Box<dyn AudioSource>,
         transmitting: Arc<AtomicBool>,
-        frames: Sender<TxFrame>,
+        events: Sender<TxEvent>,
     ) -> Result<Self, TxError> {
         let mut framer = Framer::new(source.sample_rate())?;
+        let mut encoder = VoiceEncoder::new()?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let handle = thread::Builder::new()
@@ -118,9 +134,18 @@ impl TxThread {
                 while !stopping.load(Relaxed) {
                     match framer.next(source.as_mut()) {
                         Ok(Some(samples)) => {
-                            if let Some(frame) = gate.pass(samples, transmitting.load(Relaxed))
-                                && frames.send(frame).is_err()
-                            {
+                            let Some(mark) = gate.pass(transmitting.load(Relaxed)) else {
+                                continue;
+                            };
+                            let event = match encoder.encode(samples) {
+                                Ok(payload) => TxEvent::Packet(TxPacket {
+                                    payload: payload.to_vec(),
+                                    timestamp: mark.timestamp,
+                                    end: mark.end,
+                                }),
+                                Err(error) => TxEvent::Error(error),
+                            };
+                            if events.send(event).is_err() {
                                 return;
                             }
                         }
@@ -154,6 +179,9 @@ pub enum TxError {
     /// The mic rate can't be converted.
     #[error(transparent)]
     Resample(#[from] ResampleError),
+    /// The encoder won't start.
+    #[error(transparent)]
+    Codec(#[from] CodecError),
     /// The OS wouldn't start the thread.
     #[error("couldn't start the tx thread: {0}")]
     Thread(#[from] std::io::Error),
@@ -211,7 +239,6 @@ mod tests {
         let t0 = Instant::now();
         let mut ptt = PttController::new(PttMode::Hold);
         let mut gate = Gate::default();
-        let frame = [0.1; FRAME];
         let mut sent = Vec::new();
         for i in 0..10 {
             let input = match i {
@@ -222,8 +249,8 @@ mod tests {
             if let Some(input) = input {
                 ptt.handle(input, t0);
             }
-            if let Some(out) = gate.pass(&frame, ptt.is_transmitting()) {
-                sent.push((out.timestamp, out.end));
+            if let Some(mark) = gate.pass(ptt.is_transmitting()) {
+                sent.push((mark.timestamp, mark.end));
             }
         }
         let f = FRAME as u32;
@@ -240,18 +267,28 @@ mod tests {
     }
 
     #[test]
-    fn the_thread_sends_frames_while_transmitting_and_stops_on_drop() {
+    fn the_thread_sends_opus_packets_while_transmitting_and_stops_on_drop() {
         let mut source = tone(48_000);
         source.advance_ms(200);
         let transmitting = Arc::new(AtomicBool::new(true));
-        let (sender, frames) = unbounded();
+        let (sender, events) = unbounded();
         let thread = TxThread::spawn(Box::new(source), Arc::clone(&transmitting), sender).unwrap();
-        let received: Vec<TxFrame> = (0..10)
-            .map(|_| frames.recv_timeout(Duration::from_secs(5)).unwrap())
-            .collect();
+        let packets: Vec<TxPacket> = (0..10)
+            .map(
+                |_| match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+                    TxEvent::Packet(packet) => Some(packet),
+                    TxEvent::Error(_) => None,
+                },
+            )
+            .collect::<Option<_>>()
+            .unwrap();
         drop(thread);
-        assert!(received.iter().all(|f| f.samples.len() == FRAME && !f.end));
-        assert_eq!(received[9].timestamp, 9 * FRAME as u32);
-        assert!(frames.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(
+            packets
+                .iter()
+                .all(|p| (2..=1275).contains(&p.payload.len()) && !p.end)
+        );
+        assert_eq!(packets[9].timestamp, 9 * FRAME as u32);
+        assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
     }
 }
