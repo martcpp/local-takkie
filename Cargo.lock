@@ -1597,6 +1597,7 @@ dependencies = [
  "opus",
  "rtrb",
  "rubato",
+ "socket2",
  "takkie-core",
  "thiserror 2.0.21",
 ]
