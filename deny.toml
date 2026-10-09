@@ -3,7 +3,6 @@ yanked = "deny"
 # Each exception names the ticket that removes it. Anything else fails.
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste (via ratatui 0.28) is unmaintained; #111 upgrades ratatui" },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 (via local-ip-address) is unmaintained; #97 replaces local-ip-address" },
 ]
 
 [licenses]

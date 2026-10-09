@@ -1,4 +1,3 @@
-use local_ip_address::local_ip;
 use log::{info, warn};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::net::SocketAddr;
@@ -30,10 +29,13 @@ impl Data {
         let instance_name = instant_name.to_string();
 
         // Automatically get local IP instead of hardcoding
-        let ip = local_ip().unwrap_or_else(|_| {
-            warn!("Failed to get local IP, using localhost");
-            IpAddr::V4(Ipv4Addr::LOCALHOST)
-        });
+        let ip = match crate::net::address::local_networks().first() {
+            Some(net) => IpAddr::V4(net.ip),
+            None => {
+                warn!("Failed to get local IP, using localhost");
+                IpAddr::V4(Ipv4Addr::LOCALHOST)
+            }
+        };
 
         info!("Using local IP: {}", ip);
 
