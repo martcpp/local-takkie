@@ -11,6 +11,10 @@
 //! [`JitterBuffer::pop_next`]. Anything buffered beyond the max delay is
 //! trimmed back to the target. The buffer starts over after the last packet
 //! of a press, or after a stretch of silence in case that packet was lost.
+//!
+//! A missing frame comes out as [`Playout::Fec`] when the packet after it is
+//! already here, since Opus can rebuild it from that packet's FEC data, and
+//! as [`Playout::Plc`] otherwise.
 
 use std::time::{Duration, Instant};
 
@@ -59,6 +63,22 @@ pub struct JitterBuffer<T> {
     playing: bool,
     first_arrival: Option<Instant>,
     last_arrival: Option<Instant>,
+    stats: Stats,
+}
+
+/// Running totals for one sender.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// Packets stored for playout.
+    pub received: u64,
+    /// Frames played without their packet.
+    pub lost: u64,
+    /// Packets that arrived after their turn.
+    pub late: u64,
+    /// Packets that arrived twice.
+    pub duplicates: u64,
+    /// Packets dropped to bring the delay back down.
+    pub trimmed: u64,
 }
 
 /// What [`JitterBuffer::insert`] did with a packet.
@@ -76,7 +96,7 @@ pub enum Insert {
 
 /// What to play for the next frame.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Playout<T> {
+pub enum Playout<'a, T> {
     /// The packet arrived.
     Packet {
         /// Its sequence number.
@@ -84,8 +104,15 @@ pub enum Playout<T> {
         /// Its payload.
         payload: T,
     },
-    /// The packet didn't arrive in time.
-    Missing {
+    /// Missing, but the next packet is here: decode its FEC data.
+    Fec {
+        /// The missing sequence number.
+        seq: Seq,
+        /// The payload of the packet after it, which stays buffered.
+        next: &'a T,
+    },
+    /// Missing with nothing to rebuild it from: use loss concealment.
+    Plc {
         /// The missing sequence number.
         seq: Seq,
     },
@@ -119,7 +146,14 @@ impl<T> JitterBuffer<T> {
             playing: false,
             first_arrival: None,
             last_arrival: None,
+            stats: Stats::default(),
         }
+    }
+
+    /// Totals since the buffer was made.
+    #[must_use]
+    pub fn stats(&self) -> Stats {
+        self.stats
     }
 
     /// How many packets fit.
@@ -142,6 +176,16 @@ impl<T> JitterBuffer<T> {
 
     /// Stores a packet that arrived at `now`.
     pub fn insert(&mut self, seq: Seq, payload: T, now: Instant) -> Insert {
+        let result = self.place(seq, payload, now);
+        match result {
+            Insert::Stored | Insert::Restarted => self.stats.received += 1,
+            Insert::Duplicate => self.stats.duplicates += 1,
+            Insert::Late => self.stats.late += 1,
+        }
+        result
+    }
+
+    fn place(&mut self, seq: Seq, payload: T, now: Instant) -> Insert {
         self.first_arrival.get_or_insert(now);
         self.last_arrival = Some(now);
 
@@ -158,7 +202,7 @@ impl<T> JitterBuffer<T> {
             self.next = Some(seq);
         } else if distance(next, seq) >= self.capacity() {
             self.reset();
-            self.insert(seq, payload, now);
+            self.place(seq, payload, now);
             return Insert::Restarted;
         }
 
@@ -180,7 +224,7 @@ impl<T> JitterBuffer<T> {
     }
 
     /// What to play for the frame due at `now`.
-    pub fn pop_next(&mut self, now: Instant) -> Playout<T> {
+    pub fn pop_next(&mut self, now: Instant) -> Playout<'_, T> {
         if self
             .last_arrival
             .is_some_and(|at| now.saturating_duration_since(at) >= self.config.silence)
@@ -207,9 +251,16 @@ impl<T> JitterBuffer<T> {
         if self.end == Some(next) {
             self.reset();
         }
-        match played {
-            Some(payload) => Playout::Packet { seq: next, payload },
-            None => Playout::Missing { seq: next },
+        if let Some(payload) = played {
+            return Playout::Packet { seq: next, payload };
+        }
+        self.stats.lost += 1;
+        match self.peek(next.next()) {
+            Some(following) => Playout::Fec {
+                seq: next,
+                next: following,
+            },
+            None => Playout::Plc { seq: next },
         }
     }
 
@@ -227,7 +278,9 @@ impl<T> JitterBuffer<T> {
         let keep = self.config.frames(self.config.target).max(1);
         let mut seq = next;
         for _ in 0..buffered.saturating_sub(keep) {
-            self.take(seq);
+            if self.take(seq).is_some() {
+                self.stats.trimmed += 1;
+            }
             seq = seq.next();
         }
         self.next = Some(seq);
@@ -242,6 +295,13 @@ impl<T> JitterBuffer<T> {
             return Some(payload);
         }
         None
+    }
+
+    fn peek(&self, seq: Seq) -> Option<&T> {
+        match self.slots.get(self.index(seq)) {
+            Some(Some((held, payload))) if *held == seq => Some(payload),
+            _ => None,
+        }
     }
 
     fn store(&mut self, seq: Seq, payload: T) -> Insert {
@@ -290,15 +350,25 @@ mod tests {
 
     const MS: Duration = Duration::from_millis(1);
 
-    fn packet(seq: u32) -> Playout<u32> {
-        Playout::Packet {
-            seq: Seq::new(seq),
-            payload: seq,
-        }
+    #[derive(Debug, PartialEq, Eq)]
+    enum Out {
+        Packet(u32),
+        Fec(u32, u32),
+        Plc(u32),
+        NotReady,
     }
+    use Out::*;
 
-    fn missing(seq: u32) -> Playout<u32> {
-        Playout::Missing { seq: Seq::new(seq) }
+    fn out(playout: Playout<'_, u32>) -> Out {
+        match playout {
+            Playout::Packet { seq, payload } => {
+                assert_eq!(seq.get(), payload);
+                Packet(payload)
+            }
+            Playout::Fec { seq, next } => Fec(seq.get(), *next),
+            Playout::Plc { seq } => Plc(seq.get()),
+            Playout::NotReady => NotReady,
+        }
     }
 
     fn fill(buffer: &mut JitterBuffer<u32>, seqs: &[u32], at: Instant) {
@@ -307,8 +377,12 @@ mod tests {
         }
     }
 
-    fn pop(buffer: &mut JitterBuffer<u32>, count: usize, at: Instant) -> Vec<Playout<u32>> {
-        (0..count).map(|_| buffer.pop_next(at)).collect()
+    fn pop(buffer: &mut JitterBuffer<u32>, count: usize, at: Instant) -> Vec<Out> {
+        (0..count).map(|_| out(buffer.pop_next(at))).collect()
+    }
+
+    fn pop_one(buffer: &mut JitterBuffer<u32>, at: Instant) -> Out {
+        out(buffer.pop_next(at))
     }
 
     #[test]
@@ -329,7 +403,7 @@ mod tests {
         assert_eq!(buffer.len(), 3);
         assert_eq!(
             pop(&mut buffer, 3, t0 + 60 * MS),
-            [packet(1), packet(2), packet(3)]
+            [Packet(1), Packet(2), Packet(3)]
         );
         assert!(buffer.is_empty());
     }
@@ -341,7 +415,7 @@ mod tests {
         fill(&mut buffer, &[3, 1, 2, 5, 4], t0);
         assert_eq!(
             pop(&mut buffer, 5, t0 + 60 * MS),
-            [packet(1), packet(2), packet(3), packet(4), packet(5)]
+            [Packet(1), Packet(2), Packet(3), Packet(4), Packet(5)]
         );
     }
 
@@ -352,7 +426,7 @@ mod tests {
         fill(&mut buffer, &[1, 2], t0);
         assert_eq!(buffer.insert(Seq::new(2), 99, t0), Insert::Duplicate);
         assert_eq!(buffer.len(), 2);
-        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [packet(1), packet(2)]);
+        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [Packet(1), Packet(2)]);
     }
 
     #[test]
@@ -360,20 +434,20 @@ mod tests {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &[1, 2, 3], t0);
-        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [packet(1), packet(2)]);
+        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [Packet(1), Packet(2)]);
         assert_eq!(buffer.insert(Seq::new(1), 1, t0), Insert::Late);
         assert_eq!(buffer.insert(Seq::new(2), 2, t0), Insert::Late);
-        assert_eq!(pop(&mut buffer, 1, t0 + 60 * MS), [packet(3)]);
+        assert_eq!(pop(&mut buffer, 1, t0 + 60 * MS), [Packet(3)]);
     }
 
     #[test]
-    fn gaps_come_out_as_missing() {
+    fn a_gap_before_a_present_packet_uses_fec() {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &[1, 4], t0);
         assert_eq!(
             pop(&mut buffer, 4, t0 + 60 * MS),
-            [packet(1), missing(2), missing(3), packet(4)]
+            [Packet(1), Plc(2), Fec(3, 4), Packet(4)]
         );
     }
 
@@ -382,9 +456,9 @@ mod tests {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &[1, 3], t0);
-        assert_eq!(pop(&mut buffer, 1, t0 + 60 * MS), [packet(1)]);
+        assert_eq!(pop(&mut buffer, 1, t0 + 60 * MS), [Packet(1)]);
         fill(&mut buffer, &[2], t0 + 60 * MS);
-        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [packet(2), packet(3)]);
+        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [Packet(2), Packet(3)]);
     }
 
     #[test]
@@ -402,7 +476,7 @@ mod tests {
         fill(&mut buffer, &[0, u32::MAX, 1, u32::MAX - 1], t0);
         assert_eq!(
             pop(&mut buffer, 4, t0 + 60 * MS),
-            [packet(u32::MAX - 1), packet(u32::MAX), packet(0), packet(1)]
+            [Packet(u32::MAX - 1), Packet(u32::MAX), Packet(0), Packet(1)]
         );
     }
 
@@ -410,10 +484,10 @@ mod tests {
     fn waits_for_the_target_delay_before_playing() {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
-        assert_eq!(buffer.pop_next(t0), Playout::NotReady);
+        assert_eq!(pop_one(&mut buffer, t0), NotReady);
         fill(&mut buffer, &[1, 2], t0);
-        assert_eq!(buffer.pop_next(t0 + 59 * MS), Playout::NotReady);
-        assert_eq!(buffer.pop_next(t0 + 60 * MS), packet(1));
+        assert_eq!(pop_one(&mut buffer, t0 + 59 * MS), NotReady);
+        assert_eq!(pop_one(&mut buffer, t0 + 60 * MS), Packet(1));
     }
 
     #[test]
@@ -424,25 +498,22 @@ mod tests {
         for seq in 0..20_u32 {
             let now = t0 + 20 * MS * seq;
             fill(&mut buffer, &[seq], now);
-            played.push(buffer.pop_next(now));
+            played.push(pop_one(&mut buffer, now));
         }
-        let packets: Vec<_> = played
-            .into_iter()
-            .filter(|p| *p != Playout::NotReady)
-            .collect();
-        assert_eq!(packets, (0..17).map(packet).collect::<Vec<_>>());
+        played.retain(|p| *p != NotReady);
+        assert_eq!(played, (0..17).map(Packet).collect::<Vec<_>>());
         assert_eq!(buffer.len(), 3);
     }
 
     #[test]
-    fn running_dry_while_playing_reports_missing() {
+    fn running_dry_while_playing_uses_plc() {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &[1], t0);
-        assert_eq!(buffer.pop_next(t0 + 60 * MS), packet(1));
-        assert_eq!(buffer.pop_next(t0 + 80 * MS), missing(2));
+        assert_eq!(pop_one(&mut buffer, t0 + 60 * MS), Packet(1));
+        assert_eq!(pop_one(&mut buffer, t0 + 80 * MS), Plc(2));
         fill(&mut buffer, &[3], t0 + 90 * MS);
-        assert_eq!(buffer.pop_next(t0 + 100 * MS), packet(3));
+        assert_eq!(pop_one(&mut buffer, t0 + 100 * MS), Packet(3));
     }
 
     #[test]
@@ -452,7 +523,7 @@ mod tests {
         fill(&mut buffer, &(1..=15).collect::<Vec<_>>(), t0);
         assert_eq!(
             pop(&mut buffer, 3, t0 + 60 * MS),
-            [packet(13), packet(14), packet(15)]
+            [Packet(13), Packet(14), Packet(15)]
         );
         assert!(buffer.is_empty());
     }
@@ -462,7 +533,7 @@ mod tests {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &(1..=10).collect::<Vec<_>>(), t0);
-        assert_eq!(buffer.pop_next(t0 + 60 * MS), packet(1));
+        assert_eq!(pop_one(&mut buffer, t0 + 60 * MS), Packet(1));
         assert_eq!(buffer.len(), 9);
     }
 
@@ -472,12 +543,12 @@ mod tests {
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &[1], t0);
         assert_eq!(buffer.insert_end(Seq::new(2), 2, t0), Insert::Stored);
-        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [packet(1), packet(2)]);
-        assert_eq!(buffer.pop_next(t0 + 80 * MS), Playout::NotReady);
+        assert_eq!(pop(&mut buffer, 2, t0 + 60 * MS), [Packet(1), Packet(2)]);
+        assert_eq!(pop_one(&mut buffer, t0 + 80 * MS), NotReady);
 
         fill(&mut buffer, &[50], t0 + 100 * MS);
-        assert_eq!(buffer.pop_next(t0 + 120 * MS), Playout::NotReady);
-        assert_eq!(buffer.pop_next(t0 + 160 * MS), packet(50));
+        assert_eq!(pop_one(&mut buffer, t0 + 120 * MS), NotReady);
+        assert_eq!(pop_one(&mut buffer, t0 + 160 * MS), Packet(50));
     }
 
     #[test]
@@ -485,10 +556,10 @@ mod tests {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &[1], t0);
-        assert_eq!(buffer.pop_next(t0 + 60 * MS), packet(1));
-        assert_eq!(buffer.pop_next(t0 + 300 * MS), Playout::NotReady);
+        assert_eq!(pop_one(&mut buffer, t0 + 60 * MS), Packet(1));
+        assert_eq!(pop_one(&mut buffer, t0 + 300 * MS), NotReady);
         fill(&mut buffer, &[1], t0 + 400 * MS);
-        assert_eq!(buffer.pop_next(t0 + 460 * MS), packet(1));
+        assert_eq!(pop_one(&mut buffer, t0 + 460 * MS), Packet(1));
     }
 
     #[test]
@@ -496,13 +567,36 @@ mod tests {
         let t0 = Instant::now();
         let mut buffer = JitterBuffer::new();
         fill(&mut buffer, &[1, 2], t0);
-        assert_eq!(buffer.pop_next(t0 + 60 * MS), packet(1));
+        assert_eq!(pop_one(&mut buffer, t0 + 60 * MS), Packet(1));
         assert_eq!(
             buffer.insert(Seq::new(500), 500, t0 + 70 * MS),
             Insert::Restarted
         );
         assert_eq!(buffer.len(), 1);
-        assert_eq!(buffer.pop_next(t0 + 100 * MS), Playout::NotReady);
-        assert_eq!(buffer.pop_next(t0 + 130 * MS), packet(500));
+        assert_eq!(pop_one(&mut buffer, t0 + 100 * MS), NotReady);
+        assert_eq!(pop_one(&mut buffer, t0 + 130 * MS), Packet(500));
+    }
+
+    #[test]
+    fn stats_count_every_outcome() {
+        let t0 = Instant::now();
+        let mut buffer = JitterBuffer::new();
+        fill(&mut buffer, &(1..=15).collect::<Vec<_>>(), t0);
+        buffer.insert(Seq::new(15), 15, t0);
+        assert_eq!(
+            pop(&mut buffer, 4, t0 + 60 * MS),
+            [Packet(13), Packet(14), Packet(15), Plc(16)]
+        );
+        buffer.insert(Seq::new(14), 14, t0 + 60 * MS);
+        assert_eq!(
+            buffer.stats(),
+            Stats {
+                received: 15,
+                lost: 1,
+                late: 1,
+                duplicates: 1,
+                trimmed: 12,
+            }
+        );
     }
 }
