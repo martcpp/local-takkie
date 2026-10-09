@@ -32,3 +32,10 @@ replay it with:
 ```bash
 cargo +nightly fuzz run decode_header fuzz/artifacts/decode_header/<file>
 ```
+
+## In CI
+
+The `Fuzz` workflow runs it for 10 minutes on Ubuntu whenever a pull request
+changes the decoder or this folder. You can also start it from the Actions tab
+("Run workflow"), with a different length if you like. A crash is uploaded as
+the `fuzz-artifacts` artifact.
