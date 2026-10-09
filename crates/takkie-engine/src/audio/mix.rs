@@ -30,6 +30,15 @@ pub struct RxPacket {
     pub end: bool,
 }
 
+/// What the mix thread is sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MixInput {
+    /// Audio to play.
+    Packet(RxPacket),
+    /// This sender left, so their decoder and buffer can go.
+    Left(PeerId),
+}
+
 struct Talker {
     jitter: JitterBuffer<Vec<u8>>,
     decoder: VoiceDecoder,
@@ -370,7 +379,7 @@ impl MixThread {
     /// # Errors
     /// [`MixError`] for an unusable speaker rate, or if the thread can't start.
     pub fn spawn(
-        packets: Receiver<RxPacket>,
+        packets: Receiver<MixInput>,
         mut sink: Box<dyn AudioSink>,
         shared: MixShared,
     ) -> Result<Self, MixError> {
@@ -384,9 +393,14 @@ impl MixThread {
             .name("takkie-mix".into())
             .spawn(move || {
                 while !stopping.load(Relaxed) {
-                    for packet in packets.try_iter() {
-                        if let Err(error) = mixer.receive(packet, Instant::now()) {
-                            log::warn!("dropped a packet: {error}");
+                    for input in packets.try_iter() {
+                        match input {
+                            MixInput::Packet(packet) => {
+                                if let Err(error) = mixer.receive(packet, Instant::now()) {
+                                    log::warn!("dropped a packet: {error}");
+                                }
+                            }
+                            MixInput::Left(sender) => mixer.remove(sender),
                         }
                     }
                     if let Err(error) = pacer.fill(&mut mixer, sink.as_mut(), Instant::now()) {

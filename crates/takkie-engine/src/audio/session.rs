@@ -11,7 +11,7 @@ use thiserror::Error;
 use super::config::{ConfigError, input_config, output_config};
 use super::devices::{DeviceError, Direction, find_device};
 use super::io::{AudioSink, AudioSource};
-use super::mix::{MixError, MixShared, MixThread, RxPacket};
+use super::mix::{MixError, MixInput, MixShared, MixThread};
 use super::stream::{Counters, CpalSink, CpalSource, OpenError};
 use super::tx::{LevelMeter, TxError, TxEvent, TxThread};
 
@@ -128,8 +128,8 @@ pub struct Wiring {
     pub level: Arc<LevelMeter>,
     /// Encoded packets out.
     pub tx_events: Sender<TxEvent>,
-    /// Packets in.
-    pub packets: Receiver<RxPacket>,
+    /// Packets in, and senders leaving.
+    pub packets: Receiver<MixInput>,
     /// Volume, mute, half-duplex and lost-frame counts.
     pub mix: MixShared,
 }

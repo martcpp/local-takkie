@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::unbounded;
 use takkie_core::{PeerId, Seq};
-use takkie_engine::audio::mix::{MixShared, RxPacket};
+use takkie_engine::audio::mix::{MixInput, MixShared, RxPacket};
 use takkie_engine::audio::session::{AudioEvent, AudioSession, CpalOpener, Wiring};
 use takkie_engine::audio::tx::{LevelMeter, TxEvent};
 
@@ -59,12 +59,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(event) = events.recv_timeout(Duration::from_millis(50)) {
             match event {
                 TxEvent::Packet(packet) => {
-                    packets.send(RxPacket {
+                    packets.send(MixInput::Packet(RxPacket {
                         sender: PeerId::new(1),
                         seq: Seq::new(seq),
                         payload: packet.payload,
                         end: packet.end,
-                    })?;
+                    }))?;
                     seq = seq.wrapping_add(1);
                 }
                 TxEvent::Error(error) => writeln!(out, "encode error: {error}")?,
