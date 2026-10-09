@@ -1,31 +1,24 @@
-//! The secret a channel's encryption key is derived from (ROADMAP.md
-//! section 3.6).
+//! Channel passphrases.
 
 use std::fmt;
 
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-/// A channel passphrase. Its memory is wiped when it's dropped, and it never
-/// shows up in `Debug` output. There's no `Display`, so it can't end up in a
-/// log line by accident.
-///
-/// A channel without encryption has no passphrase at all
-/// (`Option<Passphrase>`), so an empty one is rejected.
+/// A channel passphrase, wiped on drop and hidden from `Debug`.
 #[derive(Clone)]
 pub struct Passphrase(Zeroizing<String>);
 
-/// An empty string was given as a passphrase.
+/// The passphrase was empty.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 #[error("a passphrase can't be empty")]
 pub struct EmptyPassphrase;
 
 impl Passphrase {
-    /// Takes ownership of `secret`, so the only copy is the one wiped on drop.
+    /// Takes ownership, so the only copy gets wiped.
     ///
     /// # Errors
-    ///
-    /// [`EmptyPassphrase`] if `secret` is empty.
+    /// [`EmptyPassphrase`] if it's empty.
     pub fn new(secret: String) -> Result<Self, EmptyPassphrase> {
         let secret = Zeroizing::new(secret);
         if secret.is_empty() {
@@ -34,8 +27,7 @@ impl Passphrase {
         Ok(Self(secret))
     }
 
-    /// The passphrase itself, for deriving the channel key. Keep the borrow
-    /// short and never log it.
+    /// The passphrase itself. Never log it.
     #[must_use]
     pub fn expose_secret(&self) -> &str {
         &self.0

@@ -1,6 +1,4 @@
-//! Wire protocol v1 (ROADMAP.md section 3.5): every UDP datagram starts with
-//! a fixed 24-byte header, followed by the payload. Multi-byte fields are
-//! big-endian.
+//! Wire protocol v1: a 24-byte big-endian header, then the payload.
 
 use std::ops::BitOr;
 
@@ -8,28 +6,28 @@ use thiserror::Error;
 
 use crate::{ChannelId, PeerId, Seq};
 
-/// The first two bytes of every packet, "TK". Anything else is dropped.
+/// Every packet starts with "TK".
 pub const MAGIC: [u8; 2] = *b"TK";
 
-/// The protocol version this code speaks.
+/// Protocol version.
 pub const VERSION: u8 = 1;
 
-/// Size of the header in bytes; the payload starts right after it.
+/// Header size in bytes.
 pub const HEADER_LEN: usize = 24;
 
 /// What a packet carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PacketKind {
-    /// One Opus frame.
+    /// An Opus frame.
     Audio,
-    /// Keep-alive with the sender's display name.
+    /// Keep-alive with the display name.
     Hello,
     /// The sender is leaving.
     Bye,
 }
 
 impl PacketKind {
-    /// The byte written in the header's `kind` field.
+    /// The `kind` byte.
     #[must_use]
     pub const fn to_byte(self) -> u8 {
         match self {
@@ -39,7 +37,7 @@ impl PacketKind {
         }
     }
 
-    /// The kind for a header's `kind` byte, if it's one we know.
+    /// The kind for a `kind` byte, if known.
     #[must_use]
     pub const fn from_byte(byte: u8) -> Option<Self> {
         match byte {
@@ -51,33 +49,31 @@ impl PacketKind {
     }
 }
 
-/// The header's `flags` byte.
+/// The `flags` byte.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Flags(u8);
 
 impl Flags {
-    /// No flags set.
+    /// No flags.
     pub const NONE: Self = Self(0);
-    /// The payload is encrypted with the channel key.
+    /// The payload is encrypted.
     pub const ENCRYPTED: Self = Self(1);
-    /// The last packet of a push-to-talk press.
+    /// Last packet of a push-to-talk press.
     pub const END_OF_TRANSMISSION: Self = Self(1 << 1);
 
-    /// Flags from a header's raw byte. Bits this version doesn't know are
-    /// kept, not rejected, so a later version can add flags without older
-    /// peers dropping its packets.
+    /// Unknown bits are kept, so newer versions can add flags.
     #[must_use]
     pub const fn from_bits(bits: u8) -> Self {
         Self(bits)
     }
 
-    /// The raw byte, as written in the header.
+    /// The raw byte.
     #[must_use]
     pub const fn bits(self) -> u8 {
         self.0
     }
 
-    /// Whether every flag in `other` is set here.
+    /// Whether all of `other` is set.
     #[must_use]
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -92,26 +88,25 @@ impl BitOr for Flags {
     }
 }
 
-/// The fixed part at the start of every packet.
+/// The start of every packet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Header {
-    /// What the payload is.
+    /// Payload kind.
     pub kind: PacketKind,
-    /// The channel the sender is on.
+    /// Sender's channel.
     pub channel: ChannelId,
-    /// Encryption and end-of-transmission markers.
+    /// Header flags.
     pub flags: Flags,
-    /// Who sent it.
+    /// Sender id.
     pub sender: PeerId,
-    /// Goes up by one for every packet this sender sends, of any kind.
+    /// Per-sender packet counter.
     pub seq: Seq,
-    /// Position in the sender's audio stream, in 48 kHz samples.
+    /// Stream position in 48 kHz samples.
     pub timestamp: u32,
 }
 
 impl Header {
-    /// Writes the header into `out`, overwriting all of it, the reserved
-    /// bytes included.
+    /// Writes all 24 bytes into `out`.
     pub fn encode(&self, out: &mut [u8; HEADER_LEN]) {
         out[0..2].copy_from_slice(&MAGIC);
         out[2] = VERSION;
@@ -124,20 +119,14 @@ impl Header {
         out[20..24].copy_from_slice(&self.timestamp.to_be_bytes());
     }
 
-    /// Reads the header at the start of `packet` and returns it with the
-    /// payload that follows. `packet` comes straight off the network, so
-    /// every byte is checked and no input can make this panic.
+    /// Splits a packet into header and payload. Never panics.
     ///
     /// # Errors
-    ///
-    /// A [`DecodeError`] saying which check failed, in this order: length,
-    /// magic, version, kind, channel, reserved bytes.
+    /// [`DecodeError`] for the first check that fails.
     pub fn decode(packet: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         let Some((header, payload)) = packet.split_first_chunk::<HEADER_LEN>() else {
             return Err(DecodeError::TooShort { len: packet.len() });
         };
-        // Laid out like the wire format: magic, version, kind, channel,
-        // flags, reserved, sender, seq, timestamp.
         #[rustfmt::skip]
         let [
             m0, m1, version, kind, channel, flags, r0, r1,
@@ -170,28 +159,28 @@ impl Header {
     }
 }
 
-/// Why a packet's header was rejected. The caller drops the packet.
+/// Why a header was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum DecodeError {
-    /// Fewer bytes than a header.
+    /// Shorter than a header.
     #[error("packet is {len} bytes, shorter than the {HEADER_LEN}-byte header")]
     TooShort {
-        /// How many bytes there were.
+        /// Packet length.
         len: usize,
     },
-    /// Doesn't start with "TK", so it isn't ours.
+    /// Not "TK".
     #[error("packet doesn't start with \"TK\" (got {0:02x?})")]
     BadMagic([u8; 2]),
-    /// A protocol version this code doesn't speak.
+    /// Unknown version.
     #[error("protocol version {0} isn't supported (this is version {VERSION})")]
     UnsupportedVersion(u8),
-    /// A `kind` byte that isn't Audio, Hello or Bye.
+    /// Unknown kind.
     #[error("unknown packet kind {0}")]
     UnknownKind(u8),
-    /// A channel outside 1 to 10.
+    /// Not a channel.
     #[error("channel {0} doesn't exist")]
     BadChannel(u8),
-    /// The reserved bytes must be zero in version 1.
+    /// Reserved bytes not zero.
     #[error("reserved bytes aren't zero (got {0:02x?})")]
     ReservedNotZero([u8; 2]),
 }
@@ -218,15 +207,15 @@ mod tests {
         };
         #[rustfmt::skip]
         let expected = [
-            0x54, 0x4B,             // magic "TK"
-            0x01,                   // version
-            0x01,                   // kind: Audio
-            0x03,                   // channel 3
-            0x00,                   // flags
-            0x00, 0x00,             // reserved
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // sender
-            0x0A, 0x0B, 0x0C, 0x0D, // seq
-            0x11, 0x22, 0x33, 0x44, // timestamp
+            0x54, 0x4B,
+            0x01,
+            0x01,
+            0x03,
+            0x00,
+            0x00, 0x00,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x0A, 0x0B, 0x0C, 0x0D,
+            0x11, 0x22, 0x33, 0x44,
         ];
         assert_eq!(encoded(&header), expected);
     }
@@ -244,8 +233,8 @@ mod tests {
         #[rustfmt::skip]
         let hello = [
             0x54, 0x4B, 0x01,
-            0x02,                   // kind: Hello
-            0x0A,                   // channel 10
+            0x02,
+            0x0A,
             0x00, 0x00, 0x00,
             0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
             0xFF, 0xFF, 0xFF, 0xFF,
@@ -404,8 +393,6 @@ mod tests {
 
     #[test]
     fn decode_never_panics_on_odd_input() {
-        // Every length up to two headers, filled with each byte value, plus
-        // a valid header with every possible value in each byte.
         for len in 0..=2 * HEADER_LEN {
             for fill in [0x00, 0x01, 0x54, 0x7F, 0x80, 0xFF] {
                 let _ = Header::decode(&vec![fill; len]);

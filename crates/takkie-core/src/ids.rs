@@ -1,24 +1,24 @@
-//! Identifiers that travel in every packet header (ROADMAP.md section 3.5).
+//! Ids carried in every packet header.
 
 use std::fmt;
 
 use thiserror::Error;
 
-/// One of the ten channels, numbered 1 to 10.
+/// A channel, 1 to 10.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ChannelId(u8);
 
-/// A number that isn't a valid channel.
+/// Not a channel number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 #[error("channel {0} doesn't exist; channels are {min} to {max}", min = ChannelId::MIN.0, max = ChannelId::MAX.0)]
 pub struct InvalidChannel(pub u8);
 
 impl ChannelId {
-    /// The lowest channel.
+    /// Channel 1.
     pub const MIN: Self = Self(1);
-    /// The highest channel.
+    /// Channel 10.
     pub const MAX: Self = Self(10);
-    /// Every channel, lowest first.
+    /// All ten channels in order.
     pub const ALL: [Self; 10] = [
         Self(1),
         Self(2),
@@ -32,7 +32,7 @@ impl ChannelId {
         Self(10),
     ];
 
-    /// The channel number, 1 to 10.
+    /// The channel number.
     #[must_use]
     pub const fn get(self) -> u8 {
         self.0
@@ -43,8 +43,7 @@ impl TryFrom<u8> for ChannelId {
     type Error = InvalidChannel;
 
     /// # Errors
-    ///
-    /// [`InvalidChannel`] if `value` is outside 1 to 10.
+    /// [`InvalidChannel`] outside 1 to 10.
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if (Self::MIN.0..=Self::MAX.0).contains(&value) {
             Ok(Self(value))
@@ -66,19 +65,18 @@ impl fmt::Display for ChannelId {
     }
 }
 
-/// Identifies one running app on the network. Picked at random at startup,
-/// so it also tells a restarted app apart from its previous run.
+/// One running app, random per run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PeerId(u64);
 
 impl PeerId {
-    /// Wraps a raw id, for example one read from a packet header.
+    /// Wraps a raw id.
     #[must_use]
     pub const fn new(raw: u64) -> Self {
         Self(raw)
     }
 
-    /// The raw id, as written in a packet header.
+    /// The raw id.
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
@@ -86,43 +84,37 @@ impl PeerId {
 }
 
 impl fmt::Display for PeerId {
-    /// Sixteen hex digits, so every id has the same width in logs.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:016x}", self.0)
     }
 }
 
-/// A packet sequence number. It goes up by one per packet and wraps around
-/// after `u32::MAX`.
+/// A packet counter that wraps around.
 ///
-/// There's deliberately no `Ord`: with wrap-around, "newer than" isn't
-/// transitive, so use [`Seq::is_newer_than`] instead.
+/// No `Ord` on purpose: with wrap-around, ordering isn't transitive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Seq(u32);
 
 impl Seq {
-    /// Wraps a raw sequence number, for example one read from a packet header.
+    /// Wraps a raw number.
     #[must_use]
     pub const fn new(raw: u32) -> Self {
         Self(raw)
     }
 
-    /// The raw number, as written in a packet header.
+    /// The raw number.
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0
     }
 
-    /// The number after this one, wrapping from `u32::MAX` to 0.
+    /// The next number, wrapping to 0.
     #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.wrapping_add(1))
     }
 
-    /// Whether `self` comes after `other`, allowing for wrap-around: anything
-    /// up to half the number space ahead counts as newer (RFC 1982 serial
-    /// number arithmetic). Exactly half apart is ambiguous, so neither side
-    /// is newer.
+    /// Newer than `other`, allowing for wrap-around (RFC 1982).
     #[must_use]
     pub const fn is_newer_than(self, other: Self) -> bool {
         let ahead = self.0.wrapping_sub(other.0);
