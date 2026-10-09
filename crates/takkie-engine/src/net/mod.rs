@@ -1,3 +1,5 @@
+/// The receiving thread.
+pub mod rx;
 /// Datagram sockets.
 pub mod transport;
 
