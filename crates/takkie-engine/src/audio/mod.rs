@@ -1,3 +1,5 @@
+/// Opus encoding and decoding.
+pub mod codec;
 /// Stream config negotiation.
 pub mod config;
 /// Fake devices for tests.
