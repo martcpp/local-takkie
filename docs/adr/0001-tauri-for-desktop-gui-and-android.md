@@ -1,7 +1,7 @@
 # 0001. Tauri 2 for the desktop GUI and the Android app
 
-- **Status:** Accepted, to be confirmed by the Android spike (E4.6)
-- **Date:** 2026-10-07
+- **Status:** Accepted, confirmed by the Android spike ([0011](0011-android-feasibility.md))
+- **Date:** 2026-10-07, updated 2026-10-08
 
 ## Context
 
