@@ -110,6 +110,17 @@ impl MixControls {
     }
 }
 
+/// State that outlives one mixer, so a speaker restart keeps it.
+#[derive(Clone, Debug, Default)]
+pub struct MixShared {
+    /// The tx thread's push-to-talk flag.
+    pub transmitting: Arc<AtomicBool>,
+    /// Volume, mute and half-duplex.
+    pub controls: Arc<MixControls>,
+    /// Lost-frame counts.
+    pub counters: Arc<MixCounters>,
+}
+
 /// Every sender's buffer and decoder, mixed one frame at a time.
 pub struct Mixer {
     talkers: HashMap<PeerId, Talker>,
@@ -123,18 +134,27 @@ impl Mixer {
     /// A mixer with no senders yet, never transmitting.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_transmitting(Arc::default())
+        Self::with_shared(MixShared::default())
     }
 
     /// A mixer that follows the same push-to-talk flag as the tx thread.
     #[must_use]
     pub fn with_transmitting(transmitting: Arc<AtomicBool>) -> Self {
+        Self::with_shared(MixShared {
+            transmitting,
+            ..MixShared::default()
+        })
+    }
+
+    /// A mixer using state that outlives it.
+    #[must_use]
+    pub fn with_shared(shared: MixShared) -> Self {
         Self {
             talkers: HashMap::new(),
             frame: vec![0.0; FRAME],
-            counters: Arc::default(),
-            controls: Arc::default(),
-            transmitting,
+            counters: shared.counters,
+            controls: shared.controls,
+            transmitting: shared.transmitting,
         }
     }
 
@@ -344,18 +364,18 @@ pub struct MixThread {
 }
 
 impl MixThread {
-    /// Starts mixing `packets` into `sink`, going quiet while
-    /// `transmitting` if half-duplex is on.
+    /// Starts mixing `packets` into `sink`, with `shared` state that
+    /// outlives the thread.
     ///
     /// # Errors
     /// [`MixError`] for an unusable speaker rate, or if the thread can't start.
     pub fn spawn(
         packets: Receiver<RxPacket>,
         mut sink: Box<dyn AudioSink>,
-        transmitting: Arc<AtomicBool>,
+        shared: MixShared,
     ) -> Result<Self, MixError> {
         let mut pacer = Pacer::new(sink.sample_rate())?;
-        let mut mixer = Mixer::with_transmitting(transmitting);
+        let mut mixer = Mixer::with_shared(shared);
         let counters = mixer.counters();
         let controls = mixer.controls();
         let stop = Arc::new(AtomicBool::new(false));

@@ -16,6 +16,8 @@ pub mod rad;
 pub mod resample;
 /// Microphone side: encodes 20 ms Opus frames and sends them to peers.
 pub mod sad;
+/// Device loss recovery.
+pub mod session;
 /// Real-time cpal streams.
 pub mod stream;
 /// The sending thread.

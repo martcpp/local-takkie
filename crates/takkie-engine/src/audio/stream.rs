@@ -2,7 +2,7 @@
 //! lock-free rings: no locks, allocation, logging or system calls (ROADMAP 5.4).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{
@@ -45,6 +45,20 @@ pub struct Counters {
     pub underruns: AtomicU64,
     /// Stream errors reported by the device.
     pub errors: AtomicU64,
+    /// The device went away and the stream has to be rebuilt.
+    pub lost: AtomicBool,
+}
+
+impl Counters {
+    fn record(&self, error: &cpal::StreamError) {
+        if matches!(
+            error,
+            cpal::StreamError::DeviceNotAvailable | cpal::StreamError::StreamInvalidated
+        ) {
+            self.lost.store(true, Relaxed);
+        }
+        self.errors.fetch_add(1, Relaxed);
+    }
 }
 
 /// Why a stream couldn't start.
@@ -141,9 +155,7 @@ impl CpalSource {
         let stream = device.build_input_stream::<T, _, _>(
             &config.config(),
             move |data: &[T], _| capture(data, channels, &mut producer, &on_data.dropped),
-            move |_| {
-                on_error.errors.fetch_add(1, Relaxed);
-            },
+            move |error| on_error.record(&error),
             None,
         )?;
         stream.play()?;
@@ -208,9 +220,7 @@ impl CpalSink {
         let stream = device.build_output_stream::<T, _, _>(
             &config.config(),
             move |data: &mut [T], _| playback(data, channels, &mut consumer, &on_data.underruns),
-            move |_| {
-                on_error.errors.fetch_add(1, Relaxed);
-            },
+            move |error| on_error.record(&error),
             None,
         )?;
         stream.play()?;
