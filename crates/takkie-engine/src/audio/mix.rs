@@ -1,15 +1,13 @@
 //! The receiving side: one jitter buffer and Opus decoder per sender, mixed
 //! into 20 ms frames on a thread paced by the speaker.
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
-
-use std::collections::HashMap;
-use std::time::Instant;
 
 use takkie_core::dsp::mix_into;
 use takkie_core::jitter::{JitterBuffer, Playout};
@@ -35,12 +33,28 @@ pub struct RxPacket {
 struct Talker {
     jitter: JitterBuffer<Vec<u8>>,
     decoder: VoiceDecoder,
+    concealed: u32,
+}
+
+/// After 100 ms of guessing, silence sounds better than a drone.
+const MAX_CONCEALED: u32 = 5;
+
+/// How lost frames were covered, for stats.
+#[derive(Debug, Default)]
+pub struct MixCounters {
+    /// Rebuilt from the next packet's FEC data.
+    pub recovered: AtomicU64,
+    /// Guessed with packet loss concealment.
+    pub concealed: AtomicU64,
+    /// Played as silence.
+    pub silenced: AtomicU64,
 }
 
 /// Every sender's buffer and decoder, mixed one frame at a time.
 pub struct Mixer {
     talkers: HashMap<PeerId, Talker>,
     frame: Vec<f32>,
+    counters: Arc<MixCounters>,
 }
 
 impl Mixer {
@@ -50,7 +64,14 @@ impl Mixer {
         Self {
             talkers: HashMap::new(),
             frame: vec![0.0; FRAME],
+            counters: Arc::default(),
         }
+    }
+
+    /// Lost-frame counts, shared with other threads.
+    #[must_use]
+    pub fn counters(&self) -> Arc<MixCounters> {
+        Arc::clone(&self.counters)
     }
 
     /// Queues a packet that arrived at `now`, adding its sender on their
@@ -64,6 +85,7 @@ impl Mixer {
             std::collections::hash_map::Entry::Vacant(entry) => entry.insert(Talker {
                 jitter: JitterBuffer::new(),
                 decoder: VoiceDecoder::new()?,
+                concealed: 0,
             }),
         };
         if packet.end {
@@ -95,16 +117,57 @@ impl Mixer {
             .unwrap_or(0)
     }
 
-    /// Mixes the next 20 ms from every sender into `out`.
+    /// Mixes the next 20 ms from every sender into `out`, covering lost
+    /// frames with FEC when the next packet is here and concealment if not.
     pub fn tick(&mut self, now: Instant, out: &mut [f32]) {
         out.fill(0.0);
-        for talker in self.talkers.values_mut() {
-            if let Playout::Packet { payload, .. } = talker.jitter.pop_next(now)
-                && let Ok(FRAME) = talker.decoder.decode(&payload, &mut self.frame)
-            {
-                mix_into(out, &self.frame);
+        let frame = &mut self.frame;
+        let counters = &self.counters;
+        for Talker {
+            jitter,
+            decoder,
+            concealed,
+        } in self.talkers.values_mut()
+        {
+            let played = match jitter.pop_next(now) {
+                Playout::NotReady => continue,
+                Playout::Packet { payload, .. } => {
+                    let decoded = matches!(decoder.decode(&payload, frame), Ok(FRAME));
+                    if decoded {
+                        *concealed = 0;
+                    }
+                    decoded || conceal(decoder, concealed, frame, counters)
+                }
+                Playout::Fec { next, .. } => {
+                    let rebuilt = matches!(decoder.decode_fec(next, frame), Ok(FRAME));
+                    if rebuilt {
+                        counters.recovered.fetch_add(1, Relaxed);
+                        *concealed = 0;
+                    }
+                    rebuilt || conceal(decoder, concealed, frame, counters)
+                }
+                Playout::Plc { .. } => conceal(decoder, concealed, frame, counters),
+            };
+            if played {
+                mix_into(out, frame);
             }
         }
+    }
+}
+
+fn conceal(
+    decoder: &mut VoiceDecoder,
+    concealed: &mut u32,
+    frame: &mut [f32],
+    counters: &MixCounters,
+) -> bool {
+    if *concealed < MAX_CONCEALED && matches!(decoder.conceal(frame), Ok(FRAME)) {
+        *concealed += 1;
+        counters.concealed.fetch_add(1, Relaxed);
+        true
+    } else {
+        counters.silenced.fetch_add(1, Relaxed);
+        false
     }
 }
 
@@ -171,6 +234,7 @@ impl Pacer {
 pub struct MixThread {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    counters: Arc<MixCounters>,
 }
 
 impl MixThread {
@@ -183,12 +247,13 @@ impl MixThread {
         mut sink: Box<dyn AudioSink>,
     ) -> Result<Self, MixError> {
         let mut pacer = Pacer::new(sink.sample_rate())?;
+        let mut mixer = Mixer::new();
+        let counters = mixer.counters();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let handle = thread::Builder::new()
             .name("takkie-mix".into())
             .spawn(move || {
-                let mut mixer = Mixer::new();
                 while !stopping.load(Relaxed) {
                     for packet in packets.try_iter() {
                         if let Err(error) = mixer.receive(packet, Instant::now()) {
@@ -205,7 +270,14 @@ impl MixThread {
         Ok(Self {
             stop,
             handle: Some(handle),
+            counters,
         })
+    }
+
+    /// Lost-frame counts.
+    #[must_use]
+    pub fn counters(&self) -> Arc<MixCounters> {
+        Arc::clone(&self.counters)
     }
 }
 
@@ -395,5 +467,84 @@ mod tests {
             pacer.fill(&mut mixer, &mut sink, Instant::now()).unwrap(),
             0
         );
+    }
+
+    fn rms(frame: &[f32]) -> f32 {
+        (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt()
+    }
+
+    fn live(mixer: &mut Mixer, sent: &[Vec<u8>], keep: impl Fn(usize) -> bool) -> Vec<Vec<f32>> {
+        let t0 = Instant::now();
+        let mut out = vec![0.0; FRAME];
+        let mut played = Vec::new();
+        for tick in 0..sent.len() + 3 {
+            let now = t0 + Duration::from_millis(20 * tick as u64);
+            if let Some(payload) = sent.get(tick).filter(|_| keep(tick)) {
+                mixer.receive(rx(1, tick, payload), now).unwrap();
+            }
+            mixer.tick(now, &mut out);
+            if tick >= 3 {
+                played.push(out.clone());
+            }
+        }
+        played
+    }
+
+    #[test]
+    fn five_percent_random_loss_leaves_no_frame_missing() {
+        let sent = packets(440.0, 200);
+        let mut seed = 7_u32;
+        let lost: Vec<bool> = (0..sent.len())
+            .map(|seq| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                seq > 2 && seq < 197 && (seed >> 16).is_multiple_of(20)
+            })
+            .collect();
+        let dropped = lost.iter().filter(|l| **l).count() as u64;
+        assert!(dropped >= 5, "only {dropped} packets dropped");
+
+        let mut mixer = Mixer::new();
+        let played = live(&mut mixer, &sent, |seq| !lost[seq]);
+        let silent = played
+            .iter()
+            .skip(1)
+            .filter(|frame| rms(frame) < 0.01)
+            .count();
+        assert_eq!(silent, 0, "{silent} frames came out silent");
+        let counters = mixer.counters();
+        let covered = counters.recovered.load(Relaxed) + counters.concealed.load(Relaxed);
+        assert_eq!(covered, dropped);
+        assert_eq!(counters.silenced.load(Relaxed), 0);
+    }
+
+    #[test]
+    fn a_single_gap_is_rebuilt_from_fec() {
+        let sent = packets(440.0, 10);
+        let mut mixer = Mixer::new();
+        live(&mut mixer, &sent, |seq| seq != 5);
+        let counters = mixer.counters();
+        assert_eq!(counters.recovered.load(Relaxed), 1);
+        assert_eq!(counters.concealed.load(Relaxed), 0);
+    }
+
+    #[test]
+    fn a_long_gap_is_concealed_then_silenced() {
+        let sent = packets(440.0, 20);
+        let mut mixer = Mixer::new();
+        live(&mut mixer, &sent, |seq| !(3..12).contains(&seq));
+        let counters = mixer.counters();
+        assert_eq!(counters.concealed.load(Relaxed), 5);
+        assert_eq!(counters.silenced.load(Relaxed), 3);
+        assert_eq!(counters.recovered.load(Relaxed), 1);
+    }
+
+    #[test]
+    fn a_corrupt_packet_is_concealed() {
+        let mut sent = packets(440.0, 3);
+        sent[1] = vec![0xFF, 0xFF, 0xFF];
+        let mut mixer = Mixer::new();
+        let played = live(&mut mixer, &sent, |_| true);
+        assert!(rms(&played[1]) > 0.0);
+        assert_eq!(mixer.counters().concealed.load(Relaxed), 1);
     }
 }
