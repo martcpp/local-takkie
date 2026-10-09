@@ -170,6 +170,8 @@ pub struct EngineSnapshot {
     pub volume: f32,
     /// The latest mic level.
     pub mic: Level,
+    /// The latest level we played, after volume and mute.
+    pub speaker: Level,
     /// Audio waiting to be heard, in ms.
     pub buffer_ms: u32,
     /// Every known peer, in id order.
@@ -440,6 +442,7 @@ impl Engine {
             muted: shared.mix.controls.is_muted(),
             volume: shared.mix.controls.volume(),
             mic: shared.level.get(),
+            speaker: shared.mix.level.get(),
             buffer_ms: mix.buffer_ms.load(Relaxed),
             peers: shared
                 .peers
@@ -708,6 +711,7 @@ mod tests {
         after(400);
         let heard = level(&b.speaker);
         assert!(heard < 0.01, "muted B heard {heard}");
+        assert!(b.engine.snapshot().speaker.rms < 0.01);
 
         b.engine.set_muted(false);
         b.engine.set_channel(ChannelId::try_from(4).unwrap());
@@ -755,6 +759,7 @@ mod tests {
         assert_eq!(heard.peers.len(), 1);
         assert!(heard.peers[0].talking);
         assert!(heard.buffer_ms > 0);
+        assert!(heard.speaker.rms > 0.1);
         assert!(heard.stats.packets_received > 0);
         let talker = a.engine.snapshot();
         assert!(talker.transmitting);
