@@ -4,6 +4,8 @@
 
 use std::ops::BitOr;
 
+use thiserror::Error;
+
 use crate::{ChannelId, PeerId, Seq};
 
 /// The first two bytes of every packet, "TK". Anything else is dropped.
@@ -36,6 +38,17 @@ impl PacketKind {
             Self::Bye => 3,
         }
     }
+
+    /// The kind for a header's `kind` byte, if it's one we know.
+    #[must_use]
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            1 => Some(Self::Audio),
+            2 => Some(Self::Hello),
+            3 => Some(Self::Bye),
+            _ => None,
+        }
+    }
 }
 
 /// The header's `flags` byte.
@@ -49,6 +62,14 @@ impl Flags {
     pub const ENCRYPTED: Self = Self(1);
     /// The last packet of a push-to-talk press.
     pub const END_OF_TRANSMISSION: Self = Self(1 << 1);
+
+    /// Flags from a header's raw byte. Bits this version doesn't know are
+    /// kept, not rejected, so a later version can add flags without older
+    /// peers dropping its packets.
+    #[must_use]
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
 
     /// The raw byte, as written in the header.
     #[must_use]
@@ -102,6 +123,77 @@ impl Header {
         out[16..20].copy_from_slice(&self.seq.get().to_be_bytes());
         out[20..24].copy_from_slice(&self.timestamp.to_be_bytes());
     }
+
+    /// Reads the header at the start of `packet` and returns it with the
+    /// payload that follows. `packet` comes straight off the network, so
+    /// every byte is checked and no input can make this panic.
+    ///
+    /// # Errors
+    ///
+    /// A [`DecodeError`] saying which check failed, in this order: length,
+    /// magic, version, kind, channel, reserved bytes.
+    pub fn decode(packet: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        let Some((header, payload)) = packet.split_first_chunk::<HEADER_LEN>() else {
+            return Err(DecodeError::TooShort { len: packet.len() });
+        };
+        // Laid out like the wire format: magic, version, kind, channel,
+        // flags, reserved, sender, seq, timestamp.
+        #[rustfmt::skip]
+        let [
+            m0, m1, version, kind, channel, flags, r0, r1,
+            s0, s1, s2, s3, s4, s5, s6, s7,
+            q0, q1, q2, q3,
+            t0, t1, t2, t3,
+        ] = *header;
+
+        if [m0, m1] != MAGIC {
+            return Err(DecodeError::BadMagic([m0, m1]));
+        }
+        if version != VERSION {
+            return Err(DecodeError::UnsupportedVersion(version));
+        }
+        let kind = PacketKind::from_byte(kind).ok_or(DecodeError::UnknownKind(kind))?;
+        let channel = ChannelId::try_from(channel).map_err(|_| DecodeError::BadChannel(channel))?;
+        if [r0, r1] != [0, 0] {
+            return Err(DecodeError::ReservedNotZero([r0, r1]));
+        }
+
+        let header = Self {
+            kind,
+            channel,
+            flags: Flags::from_bits(flags),
+            sender: PeerId::new(u64::from_be_bytes([s0, s1, s2, s3, s4, s5, s6, s7])),
+            seq: Seq::new(u32::from_be_bytes([q0, q1, q2, q3])),
+            timestamp: u32::from_be_bytes([t0, t1, t2, t3]),
+        };
+        Ok((header, payload))
+    }
+}
+
+/// Why a packet's header was rejected. The caller drops the packet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum DecodeError {
+    /// Fewer bytes than a header.
+    #[error("packet is {len} bytes, shorter than the {HEADER_LEN}-byte header")]
+    TooShort {
+        /// How many bytes there were.
+        len: usize,
+    },
+    /// Doesn't start with "TK", so it isn't ours.
+    #[error("packet doesn't start with \"TK\" (got {0:02x?})")]
+    BadMagic([u8; 2]),
+    /// A protocol version this code doesn't speak.
+    #[error("protocol version {0} isn't supported (this is version {VERSION})")]
+    UnsupportedVersion(u8),
+    /// A `kind` byte that isn't Audio, Hello or Bye.
+    #[error("unknown packet kind {0}")]
+    UnknownKind(u8),
+    /// A channel outside 1 to 10.
+    #[error("channel {0} doesn't exist")]
+    BadChannel(u8),
+    /// The reserved bytes must be zero in version 1.
+    #[error("reserved bytes aren't zero (got {0:02x?})")]
+    ReservedNotZero([u8; 2]),
 }
 
 #[cfg(test)]
@@ -195,6 +287,138 @@ mod tests {
             timestamp: 0,
         };
         assert_eq!(&encoded(&header)[6..8], &[0, 0]);
+    }
+
+    fn sample() -> Header {
+        Header {
+            kind: PacketKind::Audio,
+            channel: ChannelId::try_from(7).unwrap(),
+            flags: Flags::ENCRYPTED,
+            sender: PeerId::new(0xDEAD_BEEF_0000_0001),
+            seq: Seq::new(41),
+            timestamp: 960 * 41,
+        }
+    }
+
+    fn packet(header: &Header, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = encoded(header).to_vec();
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    #[test]
+    fn decode_reverses_encode_and_returns_the_payload() {
+        let header = sample();
+        let bytes = packet(&header, b"opus frame");
+        assert_eq!(Header::decode(&bytes), Ok((header, &b"opus frame"[..])));
+    }
+
+    #[test]
+    fn decode_accepts_an_empty_payload() {
+        let bytes = encoded(&sample());
+        assert_eq!(Header::decode(&bytes), Ok((sample(), &[][..])));
+    }
+
+    #[test]
+    fn decode_keeps_unknown_flag_bits() {
+        let mut bytes = encoded(&sample());
+        bytes[5] = 0b1000_0011;
+        let (header, _) = Header::decode(&bytes).unwrap();
+        assert!(
+            header
+                .flags
+                .contains(Flags::ENCRYPTED | Flags::END_OF_TRANSMISSION)
+        );
+        assert_eq!(header.flags.bits(), 0b1000_0011);
+    }
+
+    #[test]
+    fn decode_rejects_a_short_packet() {
+        let bytes = encoded(&sample());
+        assert_eq!(
+            Header::decode(&bytes[..HEADER_LEN - 1]),
+            Err(DecodeError::TooShort {
+                len: HEADER_LEN - 1
+            })
+        );
+        assert_eq!(Header::decode(&[]), Err(DecodeError::TooShort { len: 0 }));
+    }
+
+    #[test]
+    fn decode_rejects_bad_magic() {
+        let mut bytes = encoded(&sample());
+        bytes[0..2].copy_from_slice(b"XK");
+        assert_eq!(Header::decode(&bytes), Err(DecodeError::BadMagic(*b"XK")));
+    }
+
+    #[test]
+    fn decode_rejects_another_version() {
+        let mut bytes = encoded(&sample());
+        bytes[2] = 2;
+        assert_eq!(
+            Header::decode(&bytes),
+            Err(DecodeError::UnsupportedVersion(2))
+        );
+    }
+
+    #[test]
+    fn decode_rejects_unknown_kinds() {
+        let mut bytes = encoded(&sample());
+        for kind in [0, 4, 255] {
+            bytes[3] = kind;
+            assert_eq!(Header::decode(&bytes), Err(DecodeError::UnknownKind(kind)));
+        }
+    }
+
+    #[test]
+    fn decode_rejects_bad_channels() {
+        let mut bytes = encoded(&sample());
+        for channel in [0, 11, 255] {
+            bytes[4] = channel;
+            assert_eq!(
+                Header::decode(&bytes),
+                Err(DecodeError::BadChannel(channel))
+            );
+        }
+    }
+
+    #[test]
+    fn decode_rejects_nonzero_reserved_bytes() {
+        let mut bytes = encoded(&sample());
+        bytes[7] = 1;
+        assert_eq!(
+            Header::decode(&bytes),
+            Err(DecodeError::ReservedNotZero([0, 1]))
+        );
+    }
+
+    #[test]
+    fn decode_checks_the_length_first_then_the_magic() {
+        assert_eq!(Header::decode(b"no"), Err(DecodeError::TooShort { len: 2 }));
+        let junk = [0xFF; HEADER_LEN];
+        assert_eq!(
+            Header::decode(&junk),
+            Err(DecodeError::BadMagic([0xFF, 0xFF]))
+        );
+    }
+
+    #[test]
+    fn decode_never_panics_on_odd_input() {
+        // Every length up to two headers, filled with each byte value, plus
+        // a valid header with every possible value in each byte.
+        for len in 0..=2 * HEADER_LEN {
+            for fill in [0x00, 0x01, 0x54, 0x7F, 0x80, 0xFF] {
+                let _ = Header::decode(&vec![fill; len]);
+            }
+        }
+        let valid = encoded(&sample());
+        for at in 0..HEADER_LEN {
+            for value in 0..=u8::MAX {
+                let mut bytes = valid;
+                bytes[at] = value;
+                let _ = Header::decode(&bytes);
+            }
+        }
     }
 
     #[test]
