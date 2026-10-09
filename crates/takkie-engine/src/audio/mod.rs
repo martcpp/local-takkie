@@ -1,3 +1,5 @@
+/// Stream config negotiation.
+pub mod config;
 /// Fake devices for tests.
 pub mod fake;
 /// The hardware boundary.
