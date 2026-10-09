@@ -1468,6 +1468,7 @@ dependencies = [
  "log",
  "mdns-sd",
  "opus",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
