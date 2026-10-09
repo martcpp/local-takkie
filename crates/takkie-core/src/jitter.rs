@@ -1,33 +1,18 @@
-//! Per-sender jitter buffer: turns packets that arrive late, early or out of
-//! order back into one steady stream in `seq` order.
-//!
-//! Packets sit in a fixed ring of slots indexed by `seq`, so memory never
-//! grows. `next` is the playout point. Until playout starts it follows the
-//! oldest packet, so early reordering is fixed; after that, anything older
-//! than `next` is late and dropped.
-//!
-//! Time is passed in, never read here. Playout starts once the target delay
-//! has passed since the first packet, then gives one frame per
-//! [`JitterBuffer::pop_next`]. Anything buffered beyond the max delay is
-//! trimmed back to the target. The buffer starts over after the last packet
-//! of a press, or after a stretch of silence in case that packet was lost.
-//!
-//! A missing frame comes out as [`Playout::Fec`] when the packet after it is
-//! already here, since Opus can rebuild it from that packet's FEC data, and
-//! as [`Playout::Plc`] otherwise.
+//! Per-sender jitter buffer. Packets sit in a fixed ring indexed by `seq`;
+//! `next` is the playout point, and anything older is late.
 
 use std::time::{Duration, Instant};
 
 use crate::Seq;
 
-/// Timing for one sender's stream.
+/// Timing for one stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
     /// Audio per packet.
     pub frame: Duration,
-    /// Wait this long after the first packet before playing.
+    /// Delay before the first playout.
     pub target: Duration,
-    /// Trim back to `target` when more than this is buffered.
+    /// Trim back to `target` above this.
     pub max: Duration,
     /// Start over after this long with no packets.
     pub silence: Duration,
@@ -51,7 +36,7 @@ impl Config {
     }
 }
 
-/// Per-sender reorder and playout buffer with a fixed number of slots.
+/// Reorder and playout buffer for one sender.
 #[derive(Debug)]
 pub struct JitterBuffer<T> {
     config: Config,
@@ -66,54 +51,54 @@ pub struct JitterBuffer<T> {
     stats: Stats,
 }
 
-/// Running totals for one sender.
+/// Running totals.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
-    /// Packets stored for playout.
+    /// Packets stored.
     pub received: u64,
-    /// Frames played without their packet.
+    /// Frames played without a packet.
     pub lost: u64,
-    /// Packets that arrived after their turn.
+    /// Arrived after their turn.
     pub late: u64,
-    /// Packets that arrived twice.
+    /// Arrived twice.
     pub duplicates: u64,
-    /// Packets dropped to bring the delay back down.
+    /// Dropped to cut the delay.
     pub trimmed: u64,
 }
 
-/// What [`JitterBuffer::insert`] did with a packet.
+/// What `insert` did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Insert {
-    /// Kept for playout.
+    /// Kept.
     Stored,
     /// Already had it.
     Duplicate,
-    /// Its turn has passed.
+    /// Too late.
     Late,
-    /// So far ahead that the buffer started over from it.
+    /// So far ahead the buffer started over.
     Restarted,
 }
 
-/// What to play for the next frame.
+/// What to play next.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Playout<'a, T> {
-    /// The packet arrived.
+    /// The packet.
     Packet {
-        /// Its sequence number.
+        /// Sequence number.
         seq: Seq,
-        /// Its payload.
+        /// Payload.
         payload: T,
     },
-    /// Missing, but the next packet is here: decode its FEC data.
+    /// Missing; rebuild it from the next packet's FEC data.
     Fec {
-        /// The missing sequence number.
+        /// Sequence number.
         seq: Seq,
-        /// The payload of the packet after it, which stays buffered.
+        /// The next packet, still buffered.
         next: &'a T,
     },
-    /// Missing with nothing to rebuild it from: use loss concealment.
+    /// Missing; use loss concealment.
     Plc {
-        /// The missing sequence number.
+        /// Sequence number.
         seq: Seq,
     },
     /// Nothing to play yet.
@@ -121,13 +106,13 @@ pub enum Playout<'a, T> {
 }
 
 impl<T> JitterBuffer<T> {
-    /// A buffer with the default timing.
+    /// Default timing.
     #[must_use]
     pub fn new() -> Self {
         Self::with_config(Config::default())
     }
 
-    /// A buffer with room for twice the max delay.
+    /// Room for twice the max delay.
     #[must_use]
     pub fn with_config(config: Config) -> Self {
         // A power of two divides 2^32, so `seq % len` stays unique across wrap-around.
@@ -150,31 +135,31 @@ impl<T> JitterBuffer<T> {
         }
     }
 
-    /// Totals since the buffer was made.
+    /// Totals so far.
     #[must_use]
     pub fn stats(&self) -> Stats {
         self.stats
     }
 
-    /// How many packets fit.
+    /// Slots.
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.slots.len()
     }
 
-    /// How many packets are waiting.
+    /// Packets waiting.
     #[must_use]
     pub fn len(&self) -> usize {
         self.stored
     }
 
-    /// Whether no packets are waiting.
+    /// Whether nothing is waiting.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.stored == 0
     }
 
-    /// Stores a packet that arrived at `now`.
+    /// Stores a packet.
     pub fn insert(&mut self, seq: Seq, payload: T, now: Instant) -> Insert {
         let result = self.place(seq, payload, now);
         match result {
@@ -213,8 +198,7 @@ impl<T> JitterBuffer<T> {
         stored
     }
 
-    /// Like [`insert`](Self::insert), for the last packet of a push-to-talk
-    /// press. The buffer starts over once it's played.
+    /// For the last packet of a press; the buffer starts over after it.
     pub fn insert_end(&mut self, seq: Seq, payload: T, now: Instant) -> Insert {
         let result = self.insert(seq, payload, now);
         if matches!(result, Insert::Stored | Insert::Restarted) {
@@ -223,7 +207,7 @@ impl<T> JitterBuffer<T> {
         result
     }
 
-    /// What to play for the frame due at `now`.
+    /// The frame due at `now`.
     pub fn pop_next(&mut self, now: Instant) -> Playout<'_, T> {
         if self
             .last_arrival
