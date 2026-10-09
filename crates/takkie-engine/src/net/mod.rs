@@ -1,3 +1,5 @@
+/// mDNS announcing and browsing.
+pub mod discovery;
 /// The receiving thread.
 pub mod rx;
 /// The sending side.
