@@ -28,3 +28,7 @@ coverage/
 .claude/sessions/
 .claude/state/
 .claude/memory/
+
+# Harness state the plugin drops in whatever folder a session is in.
+**/.claude/
+!/.claude/
