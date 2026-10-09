@@ -3,13 +3,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 
-use takkie_core::dsp::mix_into;
+use takkie_core::dsp::{apply_gain, mix_into, soft_limit};
 use takkie_core::jitter::{JitterBuffer, Playout};
 use takkie_core::{PeerId, Seq};
 
@@ -34,6 +34,7 @@ struct Talker {
     jitter: JitterBuffer<Vec<u8>>,
     decoder: VoiceDecoder,
     concealed: u32,
+    talking: bool,
 }
 
 /// After 100 ms of guessing, silence sounds better than a drone.
@@ -50,11 +51,57 @@ pub struct MixCounters {
     pub silenced: AtomicU64,
 }
 
+/// Playback settings the UI changes while audio runs.
+#[derive(Debug)]
+pub struct MixControls {
+    volume: AtomicU32,
+    muted: AtomicBool,
+}
+
+impl Default for MixControls {
+    fn default() -> Self {
+        Self {
+            volume: AtomicU32::new(1.0_f32.to_bits()),
+            muted: AtomicBool::new(false),
+        }
+    }
+}
+
+impl MixControls {
+    /// Sets the playback gain, kept within 0 to 2.
+    pub fn set_volume(&self, volume: f32) {
+        let volume = if volume.is_nan() {
+            1.0
+        } else {
+            volume.clamp(0.0, 2.0)
+        };
+        self.volume.store(volume.to_bits(), Relaxed);
+    }
+
+    /// The playback gain.
+    #[must_use]
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Relaxed))
+    }
+
+    /// Silences playback; decoding carries on.
+    pub fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Relaxed);
+    }
+
+    /// Whether playback is silenced.
+    #[must_use]
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(Relaxed)
+    }
+}
+
 /// Every sender's buffer and decoder, mixed one frame at a time.
 pub struct Mixer {
     talkers: HashMap<PeerId, Talker>,
     frame: Vec<f32>,
     counters: Arc<MixCounters>,
+    controls: Arc<MixControls>,
 }
 
 impl Mixer {
@@ -65,7 +112,27 @@ impl Mixer {
             talkers: HashMap::new(),
             frame: vec![0.0; FRAME],
             counters: Arc::default(),
+            controls: Arc::default(),
         }
+    }
+
+    /// Volume and mute, shared with the UI.
+    #[must_use]
+    pub fn controls(&self) -> Arc<MixControls> {
+        Arc::clone(&self.controls)
+    }
+
+    /// Senders whose voice is playing, in id order.
+    #[must_use]
+    pub fn talking(&self) -> Vec<PeerId> {
+        let mut talking: Vec<PeerId> = self
+            .talkers
+            .iter()
+            .filter(|(_, talker)| talker.talking)
+            .map(|(id, _)| *id)
+            .collect();
+        talking.sort();
+        talking
     }
 
     /// Lost-frame counts, shared with other threads.
@@ -86,6 +153,7 @@ impl Mixer {
                 jitter: JitterBuffer::new(),
                 decoder: VoiceDecoder::new()?,
                 concealed: 0,
+                talking: false,
             }),
         };
         if packet.end {
@@ -118,7 +186,8 @@ impl Mixer {
     }
 
     /// Mixes the next 20 ms from every sender into `out`, covering lost
-    /// frames with FEC when the next packet is here and concealment if not.
+    /// frames with FEC when the next packet is here and concealment if not,
+    /// then applies volume, the limiter and mute.
     pub fn tick(&mut self, now: Instant, out: &mut [f32]) {
         out.fill(0.0);
         let frame = &mut self.frame;
@@ -127,14 +196,19 @@ impl Mixer {
             jitter,
             decoder,
             concealed,
+            talking,
         } in self.talkers.values_mut()
         {
             let played = match jitter.pop_next(now) {
-                Playout::NotReady => continue,
+                Playout::NotReady => {
+                    *talking = false;
+                    continue;
+                }
                 Playout::Packet { payload, .. } => {
                     let decoded = matches!(decoder.decode(&payload, frame), Ok(FRAME));
                     if decoded {
                         *concealed = 0;
+                        *talking = true;
                     }
                     decoded || conceal(decoder, concealed, frame, counters)
                 }
@@ -143,6 +217,7 @@ impl Mixer {
                     if rebuilt {
                         counters.recovered.fetch_add(1, Relaxed);
                         *concealed = 0;
+                        *talking = true;
                     }
                     rebuilt || conceal(decoder, concealed, frame, counters)
                 }
@@ -150,7 +225,14 @@ impl Mixer {
             };
             if played {
                 mix_into(out, frame);
+            } else {
+                *talking = false;
             }
+        }
+        apply_gain(out, self.controls.volume());
+        soft_limit(out);
+        if self.controls.is_muted() {
+            out.fill(0.0);
         }
     }
 }
@@ -235,6 +317,7 @@ pub struct MixThread {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     counters: Arc<MixCounters>,
+    controls: Arc<MixControls>,
 }
 
 impl MixThread {
@@ -249,6 +332,7 @@ impl MixThread {
         let mut pacer = Pacer::new(sink.sample_rate())?;
         let mut mixer = Mixer::new();
         let counters = mixer.counters();
+        let controls = mixer.controls();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let handle = thread::Builder::new()
@@ -271,6 +355,7 @@ impl MixThread {
             stop,
             handle: Some(handle),
             counters,
+            controls,
         })
     }
 
@@ -278,6 +363,12 @@ impl MixThread {
     #[must_use]
     pub fn counters(&self) -> Arc<MixCounters> {
         Arc::clone(&self.counters)
+    }
+
+    /// Volume and mute.
+    #[must_use]
+    pub fn controls(&self) -> Arc<MixControls> {
+        Arc::clone(&self.controls)
     }
 }
 
@@ -546,5 +637,95 @@ mod tests {
         let played = live(&mut mixer, &sent, |_| true);
         assert!(rms(&played[1]) > 0.0);
         assert_eq!(mixer.counters().concealed.load(Relaxed), 1);
+    }
+
+    fn chorus(mixer: &mut Mixer, senders: u64, frames: usize, end_last: bool) -> Vec<Vec<f32>> {
+        let streams: Vec<Vec<Vec<u8>>> = (0..senders)
+            .map(|i| packets(300.0 + 170.0 * i as f32, frames))
+            .collect();
+        let t0 = Instant::now();
+        let mut out = vec![0.0; FRAME];
+        let mut played = Vec::new();
+        for tick in 0..frames + 3 {
+            let now = t0 + Duration::from_millis(20 * tick as u64);
+            for (i, stream) in streams.iter().enumerate() {
+                if let Some(payload) = stream.get(tick) {
+                    let mut packet = rx(i as u64 + 1, tick, payload);
+                    packet.end = end_last && tick + 1 == frames;
+                    mixer.receive(packet, now).unwrap();
+                }
+            }
+            mixer.tick(now, &mut out);
+            if tick >= 3 {
+                played.push(out.clone());
+            }
+        }
+        played
+    }
+
+    fn peak(frames: &[Vec<f32>]) -> f32 {
+        frames.iter().flatten().fold(0.0, |p, s| p.max(s.abs()))
+    }
+
+    #[test]
+    fn one_two_and_five_senders_mix_and_stay_within_one() {
+        for senders in [1, 2, 5] {
+            let mut mixer = Mixer::new();
+            let played = chorus(&mut mixer, senders, 20, false);
+            assert_eq!(mixer.talking().len(), senders as usize);
+            assert!(peak(&played) <= 1.0, "{senders} senders peaked over 1");
+            assert!(played.iter().skip(1).all(|frame| rms(frame) > 0.01));
+        }
+    }
+
+    #[test]
+    fn five_loud_senders_are_limited() {
+        let mut mixer = Mixer::new();
+        let played = chorus(&mut mixer, 5, 20, false);
+        let unlimited: f32 = 5.0 * 0.3;
+        assert!(unlimited > 1.0);
+        assert!(peak(&played) <= 1.0);
+    }
+
+    #[test]
+    fn volume_scales_the_output() {
+        let mut full = Mixer::new();
+        let loud = rms(&chorus(&mut full, 1, 10, false)[5]);
+        let mut half = Mixer::new();
+        half.controls().set_volume(0.5);
+        let quiet = rms(&chorus(&mut half, 1, 10, false)[5]);
+        assert!((quiet / loud - 0.5).abs() < 0.01, "{quiet} vs {loud}");
+    }
+
+    #[test]
+    fn volume_is_kept_in_range() {
+        let controls = MixControls::default();
+        assert_eq!(controls.volume(), 1.0);
+        controls.set_volume(5.0);
+        assert_eq!(controls.volume(), 2.0);
+        controls.set_volume(-1.0);
+        assert_eq!(controls.volume(), 0.0);
+        controls.set_volume(f32::NAN);
+        assert_eq!(controls.volume(), 1.0);
+    }
+
+    #[test]
+    fn mute_silences_but_keeps_decoding() {
+        let mut mixer = Mixer::new();
+        mixer.controls().set_muted(true);
+        let played = chorus(&mut mixer, 2, 10, false);
+        assert!(played.iter().all(|frame| rms(frame) == 0.0));
+        assert_eq!(mixer.talking().len(), 2);
+        assert_eq!(mixer.counters().silenced.load(Relaxed), 0);
+        assert!(mixer.controls().is_muted());
+    }
+
+    #[test]
+    fn talking_stops_when_the_press_ends() {
+        let mut mixer = Mixer::new();
+        chorus(&mut mixer, 2, 10, true);
+        let mut out = vec![0.0; FRAME];
+        mixer.tick(Instant::now() + Duration::from_secs(1), &mut out);
+        assert!(mixer.talking().is_empty());
     }
 }
