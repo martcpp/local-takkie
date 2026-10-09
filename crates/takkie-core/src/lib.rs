@@ -6,6 +6,7 @@ pub mod dsp;
 mod ids;
 pub mod jitter;
 mod passphrase;
+pub mod peers;
 pub mod protocol;
 pub mod ptt;
 
