@@ -18,6 +18,9 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
 
 [bans]
 multiple-versions = "warn"

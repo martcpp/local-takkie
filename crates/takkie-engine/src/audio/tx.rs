@@ -182,7 +182,7 @@ impl TxThread {
                         }
                         Ok(None) => thread::sleep(Duration::from_millis(5)),
                         Err(error) => {
-                            log::error!("tx stopped: {error}");
+                            tracing::error!("tx stopped: {error}");
                             return;
                         }
                     }

@@ -65,6 +65,10 @@ impl App {
             transmitting: false,
         }
     }
+
+    pub fn note(&mut self, text: impl AsRef<str>) {
+        self.log.push(text);
+    }
 }
 
 pub fn run(mut app: App, engine: &Engine, events: &Receiver<EngineEvent>) -> io::Result<()> {

@@ -174,7 +174,7 @@ impl SendThread {
                                 &packet.payload,
                             );
                         }
-                        Ok(TxEvent::Error(error)) => log::warn!("{error}"),
+                        Ok(TxEvent::Error(error)) => tracing::warn!("{error}"),
                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
                         Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
                     }

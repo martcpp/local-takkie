@@ -398,6 +398,7 @@ impl Engine {
         )
         .map_err(EngineError::Thread)?;
 
+        tracing::info!(%id, port, channel = %config.channel, "engine started");
         let engine = Self {
             id,
             port,
@@ -518,6 +519,7 @@ impl<O: DeviceOpener> Control<O> {
             select! {
                 recv(commands) -> command => match command {
                     Ok(Command::SetChannel(channel)) => {
+                        tracing::info!(%channel, "channel changed");
                         self.shared.channel.store(channel.get(), Relaxed);
                     }
                     Err(_) => break,
@@ -562,6 +564,13 @@ impl<O: DeviceOpener> Control<O> {
             PeerEvent::Left(id) => Some(EngineEvent::PeerLeft(id)),
         };
         if let Some(event) = event {
+            match &event {
+                EngineEvent::PeerJoined(peer) => {
+                    tracing::info!(id = %peer.id, name = %peer.name, channel = %peer.channel, addr = %peer.addr, "peer joined");
+                }
+                EngineEvent::PeerLeft(id) => tracing::info!(%id, "peer left"),
+                _ => {}
+            }
             self.send(event);
         }
     }
@@ -587,18 +596,18 @@ fn audio_event(event: AudioEvent) -> EngineEvent {
             direction,
             description,
         } => {
-            log::info!("{direction} started: {description}");
+            tracing::info!("{direction} started: {description}");
             EngineEvent::DeviceStarted {
                 direction,
                 description,
             }
         }
         AudioEvent::Warning(warning) => {
-            log::warn!("{warning}");
+            tracing::warn!("{warning}");
             EngineEvent::Warning(warning)
         }
         AudioEvent::DeviceLost(direction) => {
-            log::warn!("{direction} lost, retrying the default");
+            tracing::warn!("{direction} lost, retrying the default");
             EngineEvent::DeviceLost(direction)
         }
     }
