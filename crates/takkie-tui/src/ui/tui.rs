@@ -868,6 +868,7 @@ mod tests {
             talking: false,
             last_seen: Instant::now(),
             mismatch: false,
+            muted: false,
         }
     }
 
