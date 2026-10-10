@@ -26,6 +26,11 @@ export function withProblem(state: AppState, problem: string): AppState {
   return { ...state, snapshot: null, problem }
 }
 
+/** A line of our own in the log, such as a command that failed. */
+export function withNote(state: AppState, text: string, at: number): AppState {
+  return { ...state, log: [...state.log, { at, text }].slice(-MAX_LOG) }
+}
+
 /** The peer's name, or its id while it has none. */
 export function label(peers: Peer[], id: string): string {
   return peers.find((peer) => peer.id === id)?.name || id
@@ -87,6 +92,36 @@ export function withEvent(state: AppState, event: EngineEvent, at: number): AppS
   const snapshot = state.snapshot && { ...state.snapshot, peers: peersAfter(before, event) }
   return { ...state, snapshot, log }
 }
+
+export type ChannelState = { kind: 'free' | 'busy' | 'transmitting'; text: string }
+
+/** Whether the channel is free, busy or ours, and who is talking. */
+export function channelState(snapshot: Snapshot): ChannelState {
+  const talkers = ordered(snapshot.peers, snapshot.channel)
+    .filter((peer) => peer.talking && peer.channel === snapshot.channel)
+    .map((peer) => peer.name || peer.id)
+  const who =
+    talkers.length === 0
+      ? null
+      : talkers.length === 1
+        ? `${talkers[0]} is talking`
+        : `${talkers[0]} and ${talkers.length - 1} more are talking`
+  if (snapshot.transmitting) {
+    return { kind: 'transmitting', text: who ? `Transmitting (${who} too)` : 'Transmitting' }
+  }
+  return who ? { kind: 'busy', text: `Busy: ${who}` } : { kind: 'free', text: 'Free' }
+}
+
+/** A peak level as a meter position from 0 to 1, on a 60 dB scale. */
+export function meter(peak: number): number {
+  if (!(peak > 0.001)) {
+    return 0
+  }
+  return Math.min(1, Math.max(0, (20 * Math.log10(peak) + 60) / 60))
+}
+
+/** Passphrases shorter than this get a warning. */
+export const SHORT_PASSPHRASE = 12
 
 /** Your channel first, then by name, nameless ones last. */
 export function ordered(peers: Peer[], channel: number): Peer[] {
