@@ -49,6 +49,7 @@ struct Talker {
     concealed: u32,
     talking: bool,
     end: Option<Seq>,
+    over: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,12 +274,15 @@ impl Mixer {
                 concealed: 0,
                 talking: false,
                 end: None,
+                over: false,
             }),
         };
         if packet.end {
-            let stored = talker.jitter.insert_end(packet.seq, packet.payload, now);
-            if matches!(stored, Insert::Stored | Insert::Restarted) {
-                talker.end = Some(packet.seq);
+            match talker.jitter.insert_end(packet.seq, packet.payload, now) {
+                Insert::Stored | Insert::Restarted => talker.end = Some(packet.seq),
+                // Too late to play, but it still says the transmission is over.
+                Insert::Late => talker.over = true,
+                Insert::Duplicate => {}
             }
         } else {
             talker.jitter.insert(packet.seq, packet.payload, now);
@@ -324,12 +328,21 @@ impl Mixer {
                 concealed,
                 talking,
                 end,
+                over,
             },
         ) in &mut self.talkers
         {
+            let audible = !muted_peers.contains(id);
+            if std::mem::take(over) {
+                ended |= audible;
+            }
             let (seq, played) = match jitter.pop_next(now) {
                 Playout::NotReady => {
                     *talking = false;
+                    // The buffer started over with the end packet unplayed.
+                    if jitter.is_empty() && end.take().is_some() {
+                        ended |= audible;
+                    }
                     continue;
                 }
                 Playout::Packet { seq, payload } => {
@@ -351,7 +364,6 @@ impl Mixer {
                 }
                 Playout::Plc { seq } => (seq, conceal(decoder, concealed, frame, counters)),
             };
-            let audible = !muted_peers.contains(id);
             if !played {
                 *talking = false;
             } else if audible {
@@ -958,6 +970,89 @@ mod tests {
         );
         assert!(tail[6..].iter().all(|frame| rms(frame) == 0.0));
         assert!(mixer.controls().beeps());
+    }
+
+    fn ticks(mixer: &mut Mixer, t0: Instant, range: std::ops::Range<u64>) -> Vec<Vec<f32>> {
+        let mut out = vec![0.0; FRAME];
+        range
+            .map(|tick| {
+                mixer.tick(t0 + Duration::from_millis(20 * tick), &mut out);
+                out.clone()
+            })
+            .collect()
+    }
+
+    fn beeped(frames: &[Vec<f32>]) -> bool {
+        frames
+            .iter()
+            .any(|frame| rms(frame) > 0.05 && (38..=42).contains(&crossings(frame)))
+    }
+
+    #[test]
+    fn an_end_packet_that_arrives_too_late_still_beeps() {
+        let sent = packets(440.0, 7);
+        let mut mixer = Mixer::new();
+        mixer.controls().set_beeps(true);
+        let t0 = Instant::now();
+        let mut out = vec![0.0; FRAME];
+        for tick in 0..16_u64 {
+            let now = t0 + Duration::from_millis(20 * tick);
+            if let Some(payload) = sent.get(tick as usize).filter(|_| tick < 6) {
+                mixer.receive(rx(1, tick as usize, payload), now).unwrap();
+            }
+            mixer.tick(now, &mut out);
+        }
+        assert!(mixer.talking().is_empty());
+
+        let mut last = rx(1, 6, &sent[6]);
+        last.end = true;
+        mixer
+            .receive(last, t0 + Duration::from_millis(320))
+            .unwrap();
+        assert!(beeped(&ticks(&mut mixer, t0, 16..26)));
+    }
+
+    #[test]
+    fn a_stall_that_drops_the_end_packet_still_beeps() {
+        let sent = packets(440.0, 6);
+        let mut mixer = Mixer::new();
+        mixer.controls().set_beeps(true);
+        let t0 = Instant::now();
+        let mut out = vec![0.0; FRAME];
+        for (tick, payload) in sent.iter().enumerate() {
+            let now = t0 + Duration::from_millis(20 * tick as u64);
+            let mut packet = rx(1, tick, payload);
+            packet.end = tick + 1 == sent.len();
+            mixer.receive(packet, now).unwrap();
+            mixer.tick(now, &mut out);
+        }
+        assert_eq!(mixer.talking().len(), 1);
+        assert!(mixer.buffered() > 0);
+
+        let frames = ticks(&mut mixer, t0, 30..40);
+        assert!(mixer.talking().is_empty());
+        assert!(beeped(&frames));
+        assert!(!beeped(&ticks(&mut mixer, t0, 40..60)));
+    }
+
+    #[test]
+    fn a_short_press_received_before_playback_starts_beeps_once_at_its_end() {
+        let sent = packets(440.0, 3);
+        let mut mixer = Mixer::new();
+        mixer.controls().set_beeps(true);
+        let t0 = Instant::now();
+        for (seq, payload) in sent.iter().enumerate() {
+            let mut packet = rx(1, seq, payload);
+            packet.end = seq + 1 == sent.len();
+            mixer.receive(packet, t0).unwrap();
+        }
+        assert!(!beeped(&ticks(&mut mixer, t0, 0..3)));
+        let frames = ticks(&mut mixer, t0, 3..16);
+        let beeping = frames
+            .iter()
+            .filter(|frame| (38..=42).contains(&crossings(frame)))
+            .count();
+        assert_eq!(beeping, 6, "one beep of six frames");
     }
 
     #[test]
