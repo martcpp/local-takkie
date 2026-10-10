@@ -7,18 +7,20 @@ use takkie_engine::net::address::local_networks;
 use takkie_engine::{Engine, EngineConfig};
 
 mod logging;
+mod settings;
 mod ui;
 
 const USAGE: &str = "usage: takkie [--log-level LEVEL] [name] [port]
 
-  name         how others see you (default: this computer's name)
+  name         how others see you (default: the settings file, else this
+               computer's name)
   port         UDP port to use (default: any free port)
   --log-level  error, warn, info, debug or trace, or per crate like
                info,takkie_engine=debug (default: RUST_LOG, else info)";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Args {
-    name: String,
+    name: Option<String>,
     port: u16,
     log_level: Option<String>,
 }
@@ -29,7 +31,7 @@ fn main() -> ExitCode {
         name,
         port,
         log_level,
-    } = match parse_args(&args, computer_name) {
+    } = match parse_args(&args) {
         Ok(parsed) => parsed,
         Err(err) => {
             eprintln!("takkie: {err}\n\n{USAGE}");
@@ -51,9 +53,34 @@ fn main() -> ExitCode {
         }
     };
 
+    let settings_path = settings::path();
+    let loaded = settings_path.as_deref().map(settings::load);
+    let (mut saved, settings_note) = match loaded {
+        Some(settings::Loaded::Missing(saved)) => (Some(saved), None),
+        Some(settings::Loaded::Read(saved)) => (Some(saved), None),
+        Some(settings::Loaded::Broken(why)) => {
+            tracing::warn!("settings file ignored: {why}");
+            let note = format!("⚠️ Settings file ignored ({why}), using defaults");
+            (None, Some(note))
+        }
+        None => (
+            None,
+            Some("⚠️ No config directory, settings won't be saved".to_owned()),
+        ),
+    };
+    let current = saved.clone().unwrap_or_default();
+    let cli_name = name.is_some();
+    let name = name
+        .or_else(|| current.name.clone())
+        .unwrap_or_else(computer_name);
+
     let (engine, events) = match Engine::start(EngineConfig {
         display_name: name.clone(),
         port,
+        channel: current.channel(),
+        input_device: current.input_device.clone(),
+        output_device: current.output_device.clone(),
+        half_duplex: current.half_duplex,
         ..EngineConfig::default()
     }) {
         Ok(started) => started,
@@ -67,20 +94,38 @@ fn main() -> ExitCode {
         .first()
         .map_or_else(|| "unknown".to_owned(), |net| net.ip.to_string());
 
-    let mut app = ui::tui::App::new(name, local_ip, engine.port());
+    let mut app = ui::tui::App::new(name.clone(), local_ip, engine.port());
     if let Some((dir, _)) = &logs {
         app.note(format!("📝 Logs in {}", dir.display()));
     }
-    if let Err(err) = ui::tui::run(app, &engine, &events) {
+    if let Some(path) = &settings_path {
+        app.note(format!("⚙️ Settings in {}", path.display()));
+    }
+    if let Some(note) = settings_note {
+        app.note(note);
+    }
+    let result = ui::tui::run(app, &engine, &events);
+
+    if let (Some(saved), Some(path)) = (&mut saved, &settings_path) {
+        if cli_name {
+            saved.name = Some(name);
+        }
+        saved.channel = engine.snapshot().channel.get();
+        if let Err(err) = settings::save(path, saved) {
+            tracing::warn!("settings not saved: {err:#}");
+            eprintln!("takkie: settings not saved: {err:#}");
+        }
+    }
+    if let Err(err) = result {
         eprintln!("takkie: terminal error: {err}");
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }
 
-/// Reads `[--log-level LEVEL] [name] [port]`. Missing values fall back to
-/// `default_name()` and port 0, which lets the OS pick a free one.
-fn parse_args(args: &[String], default_name: impl FnOnce() -> String) -> Result<Args, String> {
+/// Reads `[--log-level LEVEL] [name] [port]`. A missing port is 0, which
+/// lets the OS pick a free one.
+fn parse_args(args: &[String]) -> Result<Args, String> {
     let mut log_level = None;
     let mut rest = Vec::new();
     let mut args = args.iter();
@@ -94,10 +139,10 @@ fn parse_args(args: &[String], default_name: impl FnOnce() -> String) -> Result<
         }
     }
     let (name, port) = match rest.as_slice() {
-        [] => (default_name(), 0),
-        [name] => ((*name).clone(), 0),
+        [] => (None, 0),
+        [name] => (Some((*name).clone()), 0),
         [name, port] => (
-            (*name).clone(),
+            Some((*name).clone()),
             port.parse()
                 .map_err(|_| format!("`{port}` isn't a port number (0 to 65535)"))?,
         ),
@@ -130,9 +175,9 @@ mod tests {
         list.iter().map(|arg| (*arg).to_owned()).collect()
     }
 
-    fn parsed(name: &str, port: u16, log_level: Option<&str>) -> Result<Args, String> {
+    fn parsed(name: Option<&str>, port: u16, log_level: Option<&str>) -> Result<Args, String> {
         Ok(Args {
-            name: name.to_owned(),
+            name: name.map(str::to_owned),
             port,
             log_level: log_level.map(str::to_owned),
         })
@@ -140,48 +185,46 @@ mod tests {
 
     #[test]
     fn no_args_uses_defaults() {
-        assert_eq!(parse_args(&[], || "pc".to_owned()), parsed("pc", 0, None));
+        assert_eq!(parse_args(&[]), parsed(None, 0, None));
     }
 
     #[test]
     fn name_only_picks_any_port() {
         assert_eq!(
-            parse_args(&args(&["alice"]), || unreachable!()),
-            parsed("alice", 0, None)
+            parse_args(&args(&["alice"])),
+            parsed(Some("alice"), 0, None)
         );
     }
 
     #[test]
     fn name_and_port() {
         assert_eq!(
-            parse_args(&args(&["alice", "5000"]), || unreachable!()),
-            parsed("alice", 5000, None)
+            parse_args(&args(&["alice", "5000"])),
+            parsed(Some("alice"), 5000, None)
         );
     }
 
     #[test]
     fn log_level_goes_anywhere_in_either_form() {
         assert_eq!(
-            parse_args(&args(&["--log-level", "debug", "alice"]), || unreachable!()),
-            parsed("alice", 0, Some("debug"))
+            parse_args(&args(&["--log-level", "debug", "alice"])),
+            parsed(Some("alice"), 0, Some("debug"))
         );
         assert_eq!(
-            parse_args(&args(&["alice", "5000", "--log-level=trace"]), || {
-                unreachable!()
-            }),
-            parsed("alice", 5000, Some("trace"))
+            parse_args(&args(&["alice", "5000", "--log-level=trace"])),
+            parsed(Some("alice"), 5000, Some("trace"))
         );
-        assert!(parse_args(&args(&["--log-level"]), || "pc".to_owned()).is_err());
+        assert!(parse_args(&args(&["--log-level"])).is_err());
     }
 
     #[test]
     fn bad_port_is_an_error() {
-        assert!(parse_args(&args(&["alice", "nope"]), || unreachable!()).is_err());
-        assert!(parse_args(&args(&["alice", "70000"]), || unreachable!()).is_err());
+        assert!(parse_args(&args(&["alice", "nope"])).is_err());
+        assert!(parse_args(&args(&["alice", "70000"])).is_err());
     }
 
     #[test]
     fn too_many_args_is_an_error() {
-        assert!(parse_args(&args(&["a", "1", "x"]), || unreachable!()).is_err());
+        assert!(parse_args(&args(&["a", "1", "x"])).is_err());
     }
 }
