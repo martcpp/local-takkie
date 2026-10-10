@@ -17,6 +17,7 @@ use takkie_core::{ChannelId, PeerId};
 use super::peers::PeerMessage;
 use super::transport::Transport;
 use crate::audio::mix::{MixInput, RxPacket};
+use crate::threads::{STOP_WITHIN, join_within};
 
 const MAX_NAME: usize = 64;
 const HEARD_EVERY: Duration = Duration::from_secs(1);
@@ -197,7 +198,7 @@ impl Drop for RxThread {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }

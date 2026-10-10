@@ -13,6 +13,7 @@ use takkie_core::peers::Peer;
 use takkie_core::protocol::{Flags, PacketKind};
 
 use super::send::PacketSender;
+use crate::threads::{STOP_WITHIN, join_within};
 
 /// How often Hello goes out.
 pub const HELLO_EVERY: Duration = Duration::from_secs(2);
@@ -74,7 +75,7 @@ impl Drop for HelloThread {
     fn drop(&mut self) {
         drop(self.stop.take());
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }

@@ -29,8 +29,11 @@ use crate::net::peers::{PEER_TIMEOUT, PeerOutputs, PeerThread, Peers};
 use crate::net::rx::{RxCounters, RxOutputs, RxThread};
 use crate::net::send::{PacketSender, SendCounters, SendThread};
 use crate::net::{Transport, UdpTransport};
+use crate::threads::{STOP_WITHIN, join_within};
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
+// The control thread owns mDNS, whose goodbye can take up to two seconds.
+const MDNS_GOODBYE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {
@@ -499,7 +502,7 @@ impl Drop for Engine {
         drop(self.hello.take());
         drop(self.commands.take());
         if let Some(control) = self.control.take() {
-            let _ = control.join();
+            join_within(control, STOP_WITHIN + MDNS_GOODBYE);
         }
     }
 }
@@ -850,6 +853,34 @@ mod tests {
             wait_for(&b.events, |e| matches!(e, EngineEvent::PeerLeft(_))),
             EngineEvent::PeerLeft(a_id)
         );
+        assert!(b.engine.snapshot().peers.is_empty());
+    }
+
+    #[test]
+    fn twenty_starts_and_stops_leave_no_thread_behind() {
+        let network = MemoryNetwork::new();
+        let b = node(&network, "B", Vec::new());
+        for round in 0..20 {
+            let a = node(&network, "A", vec![b.addr]);
+            let a_id = a.engine.id();
+            assert!(matches!(
+                wait_for(&b.events, |e| matches!(e, EngineEvent::PeerJoined(_))),
+                EngineEvent::PeerJoined(peer) if peer.id == a_id
+            ));
+            a.engine.set_transmitting(true);
+            after(50);
+            let stopping = Instant::now();
+            drop(a);
+            let took = stopping.elapsed();
+            assert!(
+                took < Duration::from_secs(1),
+                "round {round}: stopping took {took:?}"
+            );
+            assert_eq!(
+                wait_for(&b.events, |e| matches!(e, EngineEvent::PeerLeft(_))),
+                EngineEvent::PeerLeft(a_id)
+            );
+        }
         assert!(b.engine.snapshot().peers.is_empty());
     }
 

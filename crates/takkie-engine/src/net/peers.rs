@@ -14,6 +14,7 @@ use takkie_core::peers::{Peer, PeerEvent, PeerSource, PeerTable};
 use takkie_core::{ChannelId, PeerId};
 
 use crate::audio::mix::MixInput;
+use crate::threads::{STOP_WITHIN, join_within};
 
 /// A peer silent this long is dropped.
 pub const PEER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -250,7 +251,7 @@ impl Drop for PeerThread {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }
