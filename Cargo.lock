@@ -4518,10 +4518,15 @@ dependencies = [
 name = "takkie-app"
 version = "0.2.0-alpha.1"
 dependencies = [
+ "gethostname",
  "serde",
+ "serde_json",
+ "takkie-core",
  "takkie-engine",
  "tauri",
  "tauri-build",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

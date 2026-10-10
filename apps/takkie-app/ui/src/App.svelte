@@ -2,10 +2,12 @@
   import { getVersion } from '@tauri-apps/api/app'
   import { invoke } from '@tauri-apps/api/core'
 
-  type DeviceCount = { inputs: number; outputs: number }
+  type Snapshot = { channel: number; private: boolean; peers: unknown[] }
+  type Devices = { inputs: unknown[]; outputs: unknown[] }
 
   const version = getVersion()
-  const devices = invoke<DeviceCount>('device_count')
+  const snapshot = invoke<Snapshot>('snapshot')
+  const devices = invoke<Devices>('list_devices')
 </script>
 
 <main>
@@ -13,10 +15,18 @@
   {#await version then number}
     <p class="version">version {number}</p>
   {/await}
-  {#await devices}
-    <p>Looking for audio devices…</p>
-  {:then found}
-    <p>{found.inputs} microphones and {found.outputs} speakers found.</p>
+  {#await snapshot}
+    <p>Starting…</p>
+  {:then now}
+    <p>
+      Channel {now.channel}{now.private ? ' (private)' : ''}, {now.peers.length} others on the
+      network.
+    </p>
+  {:catch error}
+    <p class="error">{error}</p>
+  {/await}
+  {#await devices then found}
+    <p>{found.inputs.length} microphones and {found.outputs.length} speakers found.</p>
   {:catch error}
     <p class="error">Audio devices can't be listed: {error}</p>
   {/await}

@@ -16,9 +16,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
+gethostname = { workspace = true }
 serde = { workspace = true }
+takkie-core = { workspace = true }
 takkie-engine = { workspace = true }
 tauri = { version = "2.12", features = [] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+serde_json = "1"
 
 [lints]
 workspace = true
