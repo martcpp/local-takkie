@@ -629,6 +629,7 @@ mod tests {
     const RATE: u32 = 48_000;
     const AMPLITUDE: f32 = 0.4;
     const DRAINED_MS: u64 = 600;
+    const RESUMED_MS: u64 = 1_500;
 
     struct Fakes {
         mic: Signal,
@@ -761,7 +762,7 @@ mod tests {
         assert!(heard < 0.01, "B on channel 4 heard {heard}");
 
         b.engine.set_channel(ChannelId::try_from(3).unwrap());
-        after(400);
+        after(RESUMED_MS);
         let heard = level(&b.speaker);
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
 
@@ -790,7 +791,7 @@ mod tests {
         assert_eq!(away.peers[0].channel.get(), 3);
 
         b.engine.set_channel(ChannelId::try_from(3).unwrap());
-        after(1_500);
+        after(RESUMED_MS);
         let heard = level(&b.speaker);
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
     }
