@@ -121,6 +121,8 @@ pub struct PeerInfo {
     pub addr: SocketAddr,
     /// Whether their voice is playing right now.
     pub talking: bool,
+    /// When we last heard from them: a Hello, audio or mDNS.
+    pub last_seen: Instant,
 }
 
 /// Something the UI should react to.
@@ -223,6 +225,7 @@ impl Shared {
             channel: peer.channel,
             addr: peer.addr,
             talking: self.mix.talking.load().contains(&peer.id),
+            last_seen: peer.last_seen,
         }
     }
 
