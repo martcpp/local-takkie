@@ -1461,10 +1461,11 @@ name = "takkie-tui"
 version = "0.1.1"
 dependencies = [
  "chrono",
- "cpal",
+ "crossbeam-channel",
  "crossterm 0.29.0",
  "gethostname",
  "ratatui",
+ "takkie-core",
  "takkie-engine",
 ]
 

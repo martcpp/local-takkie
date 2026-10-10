@@ -10,7 +10,8 @@ repository = "https://github.com/martcpp/local-takkie"
 publish = false
 
 [workspace.dependencies]
-cpal = "0.17.0"
+crossbeam-channel = "0.5.17"
+takkie-core = { version = "0.1.1", path = "crates/takkie-core" }
 thiserror = "2"
 
 [workspace.lints.rust]
