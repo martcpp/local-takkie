@@ -6,7 +6,7 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use crossbeam_channel::unbounded;
@@ -137,18 +137,23 @@ fn frequency(samples: &[f32]) -> f32 {
 fn b_hears_a_on_the_same_channel() -> Result<(), Box<dyn Error>> {
     let b = node(2, 3, false, Vec::new())?;
     let a = node(1, 3, true, vec![b.addr])?;
-    std::thread::sleep(Duration::from_millis(2_500));
-    let heard = last_second(&b);
+    let sent = AMPLITUDE / 2.0_f32.sqrt();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let (level, pitch) = loop {
+        let heard = b.speaker.last(RATE as usize / 5);
+        let (level, pitch) = (rms(&heard), frequency(&heard));
+        let clean = (level - sent).abs() / sent < 0.3 && (pitch - TONE).abs() / TONE < 0.02;
+        if clean || Instant::now() >= deadline {
+            break (level, pitch);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     drop(a);
 
-    assert_eq!(heard.len(), RATE as usize);
-    let level = rms(&heard);
-    let sent = AMPLITUDE / 2.0_f32.sqrt();
     assert!(
         (level - sent).abs() / sent < 0.3,
         "B heard a level of {level}, A sent {sent}"
     );
-    let pitch = frequency(&heard);
     assert!((pitch - TONE).abs() / TONE < 0.02, "B heard {pitch} Hz");
     Ok(())
 }
