@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, LineGauge, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, LineGauge, List, ListItem, ListState, Paragraph},
 };
 use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
 use takkie_core::{ChannelId, Passphrase, PeerId};
@@ -64,11 +64,13 @@ impl KeyReleases {
 }
 
 /// Every key the app answers to, as the help popup lists them.
-const BINDINGS: [(&str, &str); 9] = [
+const BINDINGS: [(&str, &str); 11] = [
     ("SPACE", "talk (hold or toggle, see the footer)"),
     ("T", "switch between hold and toggle"),
     ("M", "mute or unmute what you hear"),
     ("+ / -", "volume up or down"),
+    ("↑ / ↓", "pick someone in the peer list"),
+    ("X", "mute or unmute the picked person"),
     ("D", "show the microphone and speaker in use"),
     ("1-9, 0", "switch to channel 1 to 10"),
     ("P", "set or clear this channel's passphrase"),
@@ -87,6 +89,8 @@ enum Key {
     Devices,
     Channel(ChannelId),
     Passphrase,
+    Pick(i8),
+    MutePeer,
 }
 
 const MAX_SECRET: usize = 128;
@@ -153,6 +157,9 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         (KeyCode::Char('-' | '_'), _) => Some(Key::Volume(-1)),
         (KeyCode::Char('d' | 'D'), _) => Some(Key::Devices),
         (KeyCode::Char('p' | 'P'), _) => Some(Key::Passphrase),
+        (KeyCode::Up, _) => Some(Key::Pick(-1)),
+        (KeyCode::Down, _) => Some(Key::Pick(1)),
+        (KeyCode::Char('x' | 'X'), _) => Some(Key::MutePeer),
         (KeyCode::Char(digit @ '0'..='9'), _) => {
             let number = match digit {
                 '0' => 10,
@@ -162,6 +169,22 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         }
         _ => None,
     }
+}
+
+/// The peer `step` rows from the picked one, wrapping; from nothing, the
+/// first going down and the last going up.
+fn picked(peers: &[&PeerInfo], current: Option<PeerId>, step: i8) -> Option<PeerId> {
+    let count = peers.len() as isize;
+    if count == 0 {
+        return None;
+    }
+    let at = current.and_then(|id| peers.iter().position(|peer| peer.id == id));
+    let next = match at {
+        Some(at) => (at as isize + isize::from(step)).rem_euclid(count),
+        None if step < 0 => count - 1,
+        None => 0,
+    };
+    peers.get(next as usize).map(|peer| peer.id)
 }
 
 /// One 10% step up or down, kept between 0% and 200%.
@@ -234,6 +257,7 @@ pub struct App {
     mic: Option<String>,
     speaker: Option<String>,
     input: Option<SecretInput>,
+    picked: Option<PeerId>,
     // This session's passphrases, by channel. Never written anywhere.
     secrets: HashMap<ChannelId, Passphrase>,
 }
@@ -253,6 +277,7 @@ impl App {
             mic: None,
             speaker: None,
             input: None,
+            picked: None,
             secrets: HashMap::new(),
         }
     }
@@ -391,6 +416,30 @@ fn run_app(
                     set_talking(app, engine, false);
                     app.input = Some(SecretInput::new());
                 }
+                Some(Key::Pick(step)) => {
+                    let peers = ordered(&snapshot.peers, snapshot.channel);
+                    app.picked = picked(&peers, app.picked, step);
+                }
+                Some(Key::MutePeer) => {
+                    let peer = app
+                        .picked
+                        .and_then(|id| snapshot.peers.iter().find(|peer| peer.id == id));
+                    match peer {
+                        Some(peer) => {
+                            engine.set_peer_muted(peer.id, !peer.muted);
+                            app.log.push(format!(
+                                "{} {}",
+                                if peer.muted {
+                                    "🔊 Unmuted"
+                                } else {
+                                    "🔇 Muted"
+                                },
+                                label(&snapshot, peer.id)
+                            ));
+                        }
+                        None => app.log.push("👆 Pick someone with ↑ or ↓ first"),
+                    }
+                }
                 Some(Key::Channel(_)) | None => {}
             }
         }
@@ -504,7 +553,7 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
         .split(columns[0]);
 
     render_header(f, rows[0], app, snapshot);
-    render_peers(f, left[0], snapshot, Instant::now());
+    render_peers(f, left[0], snapshot, app.picked, Instant::now());
     render_ptt_status(f, left[1], app, snapshot);
     render_levels(f, left[2], snapshot);
     render_events(f, columns[1], app);
@@ -769,6 +818,10 @@ fn peer_line(peer: &PeerInfo, mine: ChannelId, now: Instant) -> Line<'static> {
             Style::default().fg(Color::Gray),
         ),
         Span::styled(
+            if peer.muted { "  🔇 muted" } else { "" },
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::styled(
             if peer.mismatch {
                 "  🔐 other passphrase"
             } else {
@@ -779,26 +832,37 @@ fn peer_line(peer: &PeerInfo, mine: ChannelId, now: Instant) -> Line<'static> {
     ])
 }
 
-fn render_peers(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot, now: Instant) {
+fn render_peers(
+    f: &mut Frame,
+    area: Rect,
+    snapshot: &EngineSnapshot,
+    picked: Option<PeerId>,
+    now: Instant,
+) {
     let here = snapshot
         .peers
         .iter()
         .filter(|peer| peer.channel == snapshot.channel)
         .count();
-    let items: Vec<ListItem> = ordered(&snapshot.peers, snapshot.channel)
+    let peers = ordered(&snapshot.peers, snapshot.channel);
+    let row = picked.and_then(|id| peers.iter().position(|peer| peer.id == id));
+    let items: Vec<ListItem> = peers
         .into_iter()
         .map(|peer| ListItem::new(peer_line(peer, snapshot.channel, now)))
         .collect();
-    let list = List::new(items).block(
-        Block::default()
-            .title(format!(
-                "👥 Peers ({here} on your channel, {} in all)",
-                snapshot.peers.len()
-            ))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::White)),
-    );
-    f.render_widget(list, area);
+    let list = List::new(items)
+        .highlight_symbol("▶ ")
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .title(format!(
+                    "👥 Peers ({here} on your channel, {} in all)",
+                    snapshot.peers.len()
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::White)),
+        );
+    f.render_stateful_widget(list, area, &mut ListState::default().with_selected(row));
 }
 
 /// Splits `line` into rows at most `width` cells wide; rows after the
@@ -893,6 +957,10 @@ mod tests {
         assert_eq!(press('-'), Some(Key::Volume(-1)));
         assert_eq!(press('D'), Some(Key::Devices));
         assert_eq!(press('p'), Some(Key::Passphrase));
+        assert_eq!(press('x'), Some(Key::MutePeer));
+        assert_eq!(key_action(KeyCode::Up, Press), Some(Key::Pick(-1)));
+        assert_eq!(key_action(KeyCode::Down, Press), Some(Key::Pick(1)));
+        assert_eq!(key_action(KeyCode::Down, Release), None);
         let channel = |n| Some(Key::Channel(ChannelId::try_from(n).unwrap()));
         assert_eq!(press('1'), channel(1));
         assert_eq!(press('9'), channel(9));
@@ -980,6 +1048,42 @@ mod tests {
         state.volume = 0.7;
         state.muted = true;
         insta::assert_snapshot!(screen(&app, &state));
+    }
+
+    #[test]
+    fn screen_with_a_picked_peer_and_a_muted_one() {
+        let mut app = app();
+        app.picked = Some(PeerId::new(3));
+        let mut state = talking_peers();
+        state.peers[0].muted = true;
+        insta::assert_snapshot!(screen(&app, &state));
+    }
+
+    #[test]
+    fn up_and_down_walk_the_list_in_screen_order_and_wrap() {
+        let mine = ChannelId::try_from(2).unwrap();
+        let state = talking_peers();
+        let peers = ordered(&state.peers, mine);
+        let ids = |n| Some(PeerId::new(n));
+        assert_eq!(picked(&peers, None, 1), ids(1));
+        assert_eq!(picked(&peers, ids(1), 1), ids(3));
+        assert_eq!(picked(&peers, ids(3), 1), ids(2));
+        assert_eq!(picked(&peers, ids(2), 1), ids(1));
+        assert_eq!(picked(&peers, None, -1), ids(2));
+        assert_eq!(picked(&peers, ids(1), -1), ids(2));
+        assert_eq!(picked(&peers, ids(99), 1), ids(1));
+        assert_eq!(picked(&[], ids(1), 1), None);
+    }
+
+    #[test]
+    fn a_muted_peer_is_marked_in_the_list() {
+        let mine = ChannelId::try_from(2).unwrap();
+        let now = Instant::now();
+        let mut quiet = peer(5, "Garage", 2, true);
+        quiet.muted = true;
+        assert!(peer_line(&quiet, mine, now).to_string().contains("muted"));
+        let heard = peer_line(&peer(6, "Attic", 2, false), mine, now).to_string();
+        assert!(!heard.contains("muted"));
     }
 
     #[test]
@@ -1219,7 +1323,7 @@ mod tests {
         assert_eq!(key_action(KeyCode::Char('T'), Press), Some(Key::SwitchMode));
         assert_eq!(key_action(KeyCode::Char('q'), Release), None);
         assert_eq!(key_action(KeyCode::Char('t'), Release), None);
-        assert_eq!(key_action(KeyCode::Char('x'), Press), None);
+        assert_eq!(key_action(KeyCode::Char('z'), Press), None);
     }
 
     #[test]

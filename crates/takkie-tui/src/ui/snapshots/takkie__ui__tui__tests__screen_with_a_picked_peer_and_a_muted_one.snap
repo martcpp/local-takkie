@@ -1,25 +1,25 @@
 ---
 source: crates/takkie-tui/src/ui/tui.rs
-expression: "screen(&app, &talking_peers())"
+expression: "screen(&app, &state)"
 ---
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                  🎵  local-takkie   Kitchen   channel 2   port 5000   192.168.1.2                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌👥  Peers (2 on your channel, 3 in all)────────────────────┐┌📋  Events Log─────────────────────────┐
-│● Bedroom              ch 2  now                          ││                                      │
-│○ 0000000000000003┌❓  Keys (any key closes)────────────────────────────────────┐                  │
-│○ Office          │ SPACE    talk (hold or toggle, see the footer)             │                  │
-│                  │ T        switch between hold and toggle                    │                  │
-│                  │ M        mute or unmute what you hear                      │                  │
-│                  │ + / -    volume up or down                                 │                  │
-│                  │ ↑ / ↓    pick someone in the peer list                     │                  │
-│                  │ X        mute or unmute the picked person                  │                  │
-└──────────────────│ D        show the microphone and speaker in use            │                  │
-┌🎤  Push-to-Talk (S│ 1-9, 0   switch to channel 1 to 10                         │                  │
-│                🟡 │ P        set or clear this channel's passphrase            │                  │
-└──────────────────│ ?        this help                                         │                  │
-┌🔊  Levels─────────│ Q / Esc  quit                                              │                  │
-│Mic      ░░░░░░░░░└────────────────────────────────────────────────────────────┘                  │
+│  ● Bedroom              ch 2  now  🔇  muted              ││                                      │
+│▶ ○ 0000000000000003     ch 2  now                        ││                                      │
+│  ○ Office               ch 5  now                        ││                                      │
+│                                                          ││                                      │
+│                                                          ││                                      │
+│                                                          ││                                      │
+│                                                          ││                                      │
+│                                                          ││                                      │
+└──────────────────────────────────────────────────────────┘│                                      │
+┌🎤  Push-to-Talk (SPACE starts and stops talking)──────────┐│                                      │
+│                🟡  BUSY: Bedroom is talking               ││                                      │
+└──────────────────────────────────────────────────────────┘│                                      │
+┌🔊  Levels─────────────────────────────────────────────────┐│                                      │
+│Mic      ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░││                                      │
 │Speaker  ████████████████████████████████████████░░░░░░░░░││                                      │
 │Buffer  48 ms    Volume  100%                             ││                                      │
 └──────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
