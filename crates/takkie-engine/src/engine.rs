@@ -1220,17 +1220,20 @@ mod tests {
             wait_for(&b.events, |e| matches!(e, EngineEvent::TalkStarted(_))),
             EngineEvent::TalkStarted(a_id)
         );
-        after(300);
-        let heard = b.engine.snapshot();
-        assert_eq!(heard.peers.len(), 1);
-        assert!(heard.peers[0].talking);
-        assert!(heard.buffer_ms > 0);
-        assert!(heard.speaker.rms > 0.1);
-        assert!(heard.stats.packets_received > 0);
-        let talker = a.engine.snapshot();
-        assert!(talker.transmitting);
-        assert!(talker.mic.rms > 0.1);
-        assert!(talker.stats.packets_sent > 0);
+        let heard = eventually(|| {
+            let heard = b.engine.snapshot();
+            heard.peers.len() == 1
+                && heard.peers[0].talking
+                && heard.buffer_ms > 0
+                && heard.speaker.rms > 0.1
+                && heard.stats.packets_received > 0
+        });
+        assert!(heard, "B's snapshot: {:?}", b.engine.snapshot());
+        let talking = eventually(|| {
+            let talker = a.engine.snapshot();
+            talker.transmitting && talker.mic.rms > 0.1 && talker.stats.packets_sent > 0
+        });
+        assert!(talking, "A's snapshot: {:?}", a.engine.snapshot());
 
         a.engine.set_transmitting(false);
         assert_eq!(
