@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use crossbeam_channel::Sender;
 use takkie_core::key::ChannelKey;
 use takkie_core::protocol::{Flags, Header, PacketKind};
@@ -28,6 +28,42 @@ const HEARD_EVERY: Duration = Duration::from_secs(1);
 // How long a sender who sealed a packet counts as private.
 const PRIVATE_FOR: Duration = Duration::from_secs(30);
 const PRIVATE_LIMIT: usize = 1024;
+// A sender stays on the mismatch list this long after their last bad packet.
+const MISMATCH_FOR: Duration = Duration::from_secs(5);
+const MISMATCH_LIMIT: usize = 64;
+
+/// Senders on our channel whose packets don't match our key, recently.
+#[derive(Debug, Default)]
+pub struct Mismatches {
+    seen: HashMap<PeerId, Instant>,
+}
+
+impl Mismatches {
+    /// Notes a bad packet from `sender`; true if the list changed.
+    pub fn note(&mut self, sender: PeerId, now: Instant) -> bool {
+        // Sender ids in packets we can't verify are unverified, so cap it.
+        if self.seen.len() >= MISMATCH_LIMIT && !self.seen.contains_key(&sender) {
+            return false;
+        }
+        self.seen.insert(sender, now).is_none()
+    }
+
+    /// Drops senders quiet for a while; true if the list changed.
+    pub fn prune(&mut self, now: Instant) -> bool {
+        let before = self.seen.len();
+        self.seen
+            .retain(|_, at| now.saturating_duration_since(*at) < MISMATCH_FOR);
+        self.seen.len() != before
+    }
+
+    /// The senders, in id order.
+    #[must_use]
+    pub fn list(&self) -> Vec<PeerId> {
+        let mut senders: Vec<PeerId> = self.seen.keys().copied().collect();
+        senders.sort();
+        senders
+    }
+}
 
 /// What happened to received datagrams.
 #[derive(Debug, Default)]
@@ -59,8 +95,10 @@ pub enum Route {
     Audio(RxPacket),
     /// News for the peer table.
     Peer(PeerMessage),
-    /// It doesn't match our key, or is a Bye we can't trust. A Hello still
-    /// tells us the sender exists.
+    /// A Bye in the clear for a sender who seals their packets.
+    Untrusted,
+    /// On our channel, but it doesn't match our key. A Hello still tells us
+    /// the sender exists.
     Mismatch {
         /// Who sent it.
         sender: PeerId,
@@ -155,10 +193,7 @@ impl Router {
             return Route::Invalid;
         };
         if header.kind == PacketKind::Bye && self.is_private(header.sender, now) {
-            return Route::Mismatch {
-                sender: header.sender,
-                presence: None,
-            };
+            return Route::Untrusted;
         }
         deliver(&header, payload, from)
     }
@@ -222,6 +257,7 @@ pub struct RxThread {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     counters: Arc<RxCounters>,
+    mismatched: Arc<ArcSwap<Vec<PeerId>>>,
 }
 
 impl RxThread {
@@ -255,13 +291,19 @@ impl RxThread {
         let stopping = Arc::clone(&stop);
         let counters = Arc::new(RxCounters::default());
         let counting = Arc::clone(&counters);
+        let mismatched: Arc<ArcSwap<Vec<PeerId>>> = Arc::default();
+        let publishing = Arc::clone(&mismatched);
         let handle = thread::Builder::new()
             .name("takkie-rx".into())
             .spawn(move || {
                 let mut buf = [0_u8; 2048];
                 let mut router = Router::new(me);
+                let mut mismatches = Mismatches::default();
                 let mut last_heard: HashMap<PeerId, Instant> = HashMap::new();
                 while !stopping.load(Relaxed) {
+                    if mismatches.prune(Instant::now()) {
+                        publishing.store(Arc::new(mismatches.list()));
+                    }
                     let (len, from) = match transport.recv_from(&mut buf) {
                         Ok(Some(received)) => received,
                         Ok(None) => continue,
@@ -297,8 +339,15 @@ impl RxThread {
                             counting.replayed.fetch_add(1, Relaxed);
                             true
                         }
-                        Route::Mismatch { presence, .. } => {
+                        Route::Untrusted => {
                             counting.mismatched.fetch_add(1, Relaxed);
+                            true
+                        }
+                        Route::Mismatch { sender, presence } => {
+                            counting.mismatched.fetch_add(1, Relaxed);
+                            if mismatches.note(sender, now) {
+                                publishing.store(Arc::new(mismatches.list()));
+                            }
                             presence.is_none_or(|seen| outputs.peers.send(seen).is_ok())
                         }
                         Route::Audio(packet) => {
@@ -331,7 +380,15 @@ impl RxThread {
             stop,
             handle: Some(handle),
             counters,
+            mismatched,
         })
+    }
+
+    /// Senders on our channel whose packets didn't match our key in the
+    /// last few seconds, republished when it changes.
+    #[must_use]
+    pub fn mismatched(&self) -> Arc<ArcSwap<Vec<PeerId>>> {
+        Arc::clone(&self.mismatched)
     }
 
     /// What happened to received datagrams.
@@ -579,17 +636,36 @@ mod tests {
             Route::Peer(PeerMessage::Bye { sender: THEM })
         );
         go(&sealed(PacketKind::Hello, 5, 10, b"Kitchen", &key(9)), now);
-        assert_eq!(
-            go(&forged_bye, now),
-            Route::Mismatch {
-                sender: THEM,
-                presence: None
-            }
-        );
+        assert_eq!(go(&forged_bye, now), Route::Untrusted);
         assert_eq!(
             go(&forged_bye, now + PRIVATE_FOR),
             Route::Peer(PeerMessage::Bye { sender: THEM })
         );
+    }
+
+    #[test]
+    fn mismatches_are_listed_once_and_fade() {
+        let mut mismatches = Mismatches::default();
+        let start = Instant::now();
+        assert!(mismatches.note(THEM, start));
+        assert!(!mismatches.note(THEM, start + Duration::from_secs(1)));
+        assert!(mismatches.note(PeerId::new(9), start));
+        assert_eq!(mismatches.list(), [THEM, PeerId::new(9)]);
+        assert!(!mismatches.prune(start + Duration::from_secs(4)));
+        assert!(mismatches.prune(start + Duration::from_secs(5)));
+        assert_eq!(mismatches.list(), [THEM]);
+        assert!(mismatches.prune(start + Duration::from_secs(6)));
+        assert!(mismatches.list().is_empty());
+    }
+
+    #[test]
+    fn the_mismatch_list_is_capped() {
+        let mut mismatches = Mismatches::default();
+        let now = Instant::now();
+        for id in 0..200 {
+            mismatches.note(PeerId::new(id), now);
+        }
+        assert_eq!(mismatches.list().len(), MISMATCH_LIMIT);
     }
 
     #[test]
@@ -638,10 +714,12 @@ mod tests {
             }
         );
         let counters = thread.counters();
+        let mismatched = thread.mismatched();
         drop(thread);
         assert_eq!(counters.received.load(Relaxed), 6);
         assert_eq!(counters.other_channel.load(Relaxed), 1);
         assert_eq!(counters.invalid.load(Relaxed), 1);
         assert_eq!(counters.mismatched.load(Relaxed), 1);
+        assert_eq!(**mismatched.load(), [THEM]);
     }
 }
