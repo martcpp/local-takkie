@@ -109,7 +109,9 @@ fn main() -> ExitCode {
     let result = ui::tui::run(app, &engine, &events, &panel);
 
     if let (Some(_), Some(path)) = (&saved, &settings_path) {
-        current.channel = engine.snapshot().channel.get();
+        let last = engine.snapshot();
+        current.channel = last.channel.get();
+        current.beeps = last.beeps;
         if let Err(err) = settings::save(path, &current) {
             tracing::warn!("settings not saved: {err:#}");
             eprintln!("takkie: settings not saved: {err:#}");

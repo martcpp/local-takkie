@@ -212,6 +212,8 @@ pub struct EngineSnapshot {
     pub transmitting: bool,
     /// Playback is muted.
     pub muted: bool,
+    /// The start and end beeps are on.
+    pub beeps: bool,
     /// Playback volume.
     pub volume: f32,
     /// The latest mic level.
@@ -500,6 +502,11 @@ impl Engine {
         self.shared.mix.controls.set_peer_muted(peer, muted);
     }
 
+    /// Turns the start and end beeps on or off.
+    pub fn set_beeps(&self, on: bool) {
+        self.shared.mix.controls.set_beeps(on);
+    }
+
     /// Playback volume: 1.0 is unchanged, clamped to 0.0..=2.0.
     pub fn set_volume(&self, volume: f32) {
         self.shared.mix.controls.set_volume(volume);
@@ -527,6 +534,7 @@ impl Engine {
             private: shared.key.load().is_some(),
             transmitting: shared.transmitting.load(Relaxed),
             muted: shared.mix.controls.is_muted(),
+            beeps: shared.mix.controls.beeps(),
             volume: shared.mix.controls.volume(),
             mic: shared.level.get(),
             speaker: shared.mix.level.get(),
@@ -1042,6 +1050,15 @@ mod tests {
 
         assert!(eventually(|| beeped(&b.speaker)), "B heard no beep");
         assert!(!beeped(&c.speaker), "C beeped without asking");
+        assert!(b.engine.snapshot().beeps && !c.engine.snapshot().beeps);
+
+        c.engine.set_beeps(true);
+        assert!(c.engine.snapshot().beeps);
+        a.engine.set_transmitting(true);
+        wait_for(&c.events, |e| *e == started);
+        a.engine.set_transmitting(false);
+        wait_for(&c.events, |e| *e == stopped);
+        assert!(eventually(|| beeped(&c.speaker)), "C heard no beep");
     }
 
     #[test]

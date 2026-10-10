@@ -64,13 +64,14 @@ impl KeyReleases {
 }
 
 /// Every key the app answers to, as the help popup lists them.
-const BINDINGS: [(&str, &str); 11] = [
+const BINDINGS: [(&str, &str); 12] = [
     ("SPACE", "talk (hold or toggle, see the footer)"),
     ("T", "switch between hold and toggle"),
     ("M", "mute or unmute what you hear"),
     ("+ / -", "volume up or down"),
     ("↑ / ↓", "pick someone in the peer list"),
     ("X", "mute or unmute the picked person"),
+    ("B", "beeps on or off (when talk starts and ends)"),
     ("D", "show the microphone and speaker in use"),
     ("1-9, 0", "switch to channel 1 to 10"),
     ("P", "set or clear this channel's passphrase"),
@@ -91,6 +92,7 @@ enum Key {
     Passphrase,
     Pick(i8),
     MutePeer,
+    Beeps,
 }
 
 const MAX_SECRET: usize = 128;
@@ -160,6 +162,7 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         (KeyCode::Up, _) => Some(Key::Pick(-1)),
         (KeyCode::Down, _) => Some(Key::Pick(1)),
         (KeyCode::Char('x' | 'X'), _) => Some(Key::MutePeer),
+        (KeyCode::Char('b' | 'B'), _) => Some(Key::Beeps),
         (KeyCode::Char(digit @ '0'..='9'), _) => {
             let number = match digit {
                 '0' => 10,
@@ -439,6 +442,15 @@ fn run_app(
                         }
                         None => app.log.push("👆 Pick someone with ↑ or ↓ first"),
                     }
+                }
+                Some(Key::Beeps) => {
+                    let beeps = !snapshot.beeps;
+                    engine.set_beeps(beeps);
+                    app.log.push(if beeps {
+                        "🔔 Beeps on"
+                    } else {
+                        "🔕 Beeps off"
+                    });
                 }
                 Some(Key::Channel(_)) | None => {}
             }
@@ -759,6 +771,8 @@ fn render_levels(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot) {
             Span::raw(format!("{} ms", snapshot.buffer_ms)),
             Span::styled("    Volume  ", Style::default().fg(Color::Gray)),
             Span::raw(format!("{:.0}%", snapshot.volume * 100.0)),
+            Span::styled("    Beeps  ", Style::default().fg(Color::Gray)),
+            Span::raw(if snapshot.beeps { "on" } else { "off" }),
             Span::styled(
                 if snapshot.muted { "  MUTED" } else { "" },
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -958,6 +972,7 @@ mod tests {
         assert_eq!(press('D'), Some(Key::Devices));
         assert_eq!(press('p'), Some(Key::Passphrase));
         assert_eq!(press('x'), Some(Key::MutePeer));
+        assert_eq!(press('B'), Some(Key::Beeps));
         assert_eq!(key_action(KeyCode::Up, Press), Some(Key::Pick(-1)));
         assert_eq!(key_action(KeyCode::Down, Press), Some(Key::Pick(1)));
         assert_eq!(key_action(KeyCode::Down, Release), None);
@@ -1123,6 +1138,9 @@ mod tests {
         let shown = screen(&app(), &state);
         assert!(shown.contains("Volume  70%"), "{shown}");
         assert!(shown.contains("MUTED"));
+        assert!(shown.contains("Beeps  off"));
+        state.beeps = true;
+        assert!(screen(&app(), &state).contains("Beeps  on"));
     }
 
     #[test]
@@ -1291,6 +1309,7 @@ mod tests {
             private: false,
             transmitting: false,
             muted: false,
+            beeps: false,
             volume: 1.0,
             mic: Level::default(),
             speaker: Level::default(),
