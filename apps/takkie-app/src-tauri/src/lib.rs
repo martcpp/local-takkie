@@ -36,16 +36,37 @@ fn publish_snapshots(app: AppHandle) {
     }
 }
 
-fn computer_name() -> String {
-    let name = gethostname::gethostname()
-        .to_string_lossy()
-        .trim()
-        .to_owned();
-    if name.is_empty() {
-        "takkie".to_owned()
-    } else {
-        name
-    }
+/// The name peers see until the user picks one: the computer's name, or
+/// on a phone, where that is just `localhost`, what the maker calls it.
+fn device_name() -> String {
+    usable(&gethostname::gethostname().to_string_lossy())
+        .or_else(phone_name)
+        .unwrap_or_else(|| "takkie".to_owned())
+}
+
+fn usable(name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty() && name != "localhost").then(|| name.to_owned())
+}
+
+#[cfg(target_os = "android")]
+fn phone_name() -> Option<String> {
+    // The market name ("REDMI 15C") is only set by some makers; the model
+    // ("25078RA3EA") always is.
+    ["ro.product.marketname", "ro.product.model"]
+        .into_iter()
+        .find_map(|property| {
+            let output = std::process::Command::new("getprop")
+                .arg(property)
+                .output()
+                .ok()?;
+            usable(&String::from_utf8_lossy(&output.stdout))
+        })
+}
+
+#[cfg(not(target_os = "android"))]
+fn phone_name() -> Option<String> {
+    None
 }
 
 /// Runs the app until its window closes.
@@ -65,7 +86,7 @@ pub fn run() -> tauri::Result<()> {
     let app = tauri::Builder::default()
         .setup(|app| {
             let config = EngineConfig {
-                display_name: computer_name(),
+                display_name: device_name(),
                 ..EngineConfig::default()
             };
             let events = app.handle().clone();
@@ -106,5 +127,36 @@ pub fn run() -> tauri::Result<()> {
 fn start() {
     if let Err(error) = run() {
         tracing::error!("the app couldn't start: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hostname_is_used_unless_it_says_nothing() {
+        assert_eq!(
+            usable(
+                "  DESKTOP-1
+"
+            ),
+            Some("DESKTOP-1".to_owned())
+        );
+        assert_eq!(usable("REDMI 15C"), Some("REDMI 15C".to_owned()));
+        assert_eq!(usable("localhost"), None);
+        assert_eq!(
+            usable(
+                " 
+"
+            ),
+            None
+        );
+        assert_eq!(usable(""), None);
+    }
+
+    #[test]
+    fn there_is_always_a_name() {
+        assert!(!device_name().is_empty());
     }
 }
