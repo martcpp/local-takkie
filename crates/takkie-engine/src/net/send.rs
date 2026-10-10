@@ -211,6 +211,16 @@ mod tests {
         Header::decode(&buf[..len]).ok().map(|(header, _)| header)
     }
 
+    fn recv_soon(transport: &MemoryTransport) -> Option<Header> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let header = recv(transport);
+            if header.is_some() || std::time::Instant::now() >= deadline {
+                return header;
+            }
+        }
+    }
+
     struct Setup {
         sender: PacketSender,
         peers: Arc<ArcSwap<Vec<SocketAddr>>>,
@@ -334,7 +344,7 @@ mod tests {
                 end: true,
             }))
             .unwrap();
-        let header = recv(&s.others[0]).unwrap();
+        let header = recv_soon(&s.others[0]).unwrap();
         drop(thread);
         assert_eq!(header.kind, PacketKind::Audio);
         assert_eq!(header.timestamp, 1_920);
