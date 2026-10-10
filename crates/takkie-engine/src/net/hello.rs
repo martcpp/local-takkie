@@ -123,11 +123,21 @@ mod tests {
         Arc::new(ArcSwap::from_pointee(peers))
     }
 
-    fn next(transport: &MemoryTransport) -> Option<(PacketKind, Vec<u8>)> {
+    fn quick(transport: &MemoryTransport) -> Option<(PacketKind, Vec<u8>)> {
         let mut buf = [0; 2048];
         let (len, _) = transport.recv_from(&mut buf).ok()??;
         let (header, payload) = Header::decode(&buf[..len]).ok()?;
         Some((header.kind, payload.to_vec()))
+    }
+
+    fn next(transport: &MemoryTransport) -> Option<(PacketKind, Vec<u8>)> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let packet = quick(transport);
+            if packet.is_some() || Instant::now() >= deadline {
+                return packet;
+            }
+        }
     }
 
     #[test]
@@ -147,7 +157,7 @@ mod tests {
         }
         drop(hello);
         let mut last = None;
-        while let Some(packet) = next(&them) {
+        while let Some(packet) = quick(&them) {
             last = Some(packet);
         }
         assert_eq!(last, Some((PacketKind::Bye, Vec::new())));
@@ -235,7 +245,7 @@ mod tests {
             next(&listed),
             Some((PacketKind::Hello, b"Kitchen".to_vec()))
         );
-        assert_eq!(next(&listed), None);
+        assert_eq!(quick(&listed), None);
         drop(hello);
         assert_eq!(next(&unlisted), Some((PacketKind::Bye, Vec::new())));
     }
