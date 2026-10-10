@@ -1,5 +1,12 @@
 {
   // Its own build folder (target/rust-analyzer), so it never holds the lock
   // that `cargo build` and `cargo xtask ci` wait on.
-  "rust-analyzer.cargo.targetDir": true
+  "rust-analyzer.cargo.targetDir": true,
+  // Watching build output makes rustc fail on Windows with "os error 32":
+  // the watcher still has a temp folder open when rustc deletes it.
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/node_modules/**": true,
+    "**/dist/**": true
+  }
 }
