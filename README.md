@@ -55,6 +55,8 @@ green dot while they talk. Press `?` in the app for the list of keys:
 | `T` | Switch between hold and toggle |
 | `M` | Mute or unmute what you hear |
 | `+` / `-` | Volume up or down |
+| `↑` / `↓` | Pick someone in the peer list |
+| `X` | Mute or unmute the picked person, for you only |
 | `D` | Show the microphone and speaker in use |
 | `1`–`9`, `0` | Switch to channel 1 to 10 |
 | `P` | Set or clear this channel's passphrase |
