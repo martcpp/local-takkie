@@ -78,7 +78,7 @@ fn main() -> ExitCode {
         .first()
         .map_or_else(|| "unknown".to_owned(), |net| net.ip.to_string());
 
-    let mut app = ui::tui::App::new(name, local_ip, engine.port());
+    let mut app = ui::tui::App::new(name, local_ip, engine.port(), current.ptt_mode);
     if let Some((dir, _)) = &logs {
         app.note(format!("📝 Logs in {}", dir.display()));
     }

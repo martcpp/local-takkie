@@ -17,12 +17,15 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Wrap},
 };
 use takkie_core::PeerId;
+use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
 use takkie_engine::{Engine, EngineEvent, EngineSnapshot};
 
+use crate::settings::PttMode as PttChoice;
+
 const MAX_EVENTS: usize = 100;
-// Without key-release events, a held key only shows up as repeats, and the
-// first repeat comes after the OS repeat delay (often 500 ms).
-const RELEASE_GUESS: Duration = Duration::from_millis(600);
+// Longer than the OS key-repeat delay, or a held key flickers off before
+// the first repeat arrives.
+const RELEASE_GUESS: Duration = Duration::from_millis(700);
 
 /// Whether this terminal tells us when a key is let go.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,13 +55,9 @@ impl KeyReleases {
 
     pub fn describe(self) -> &'static str {
         match self {
-            Self::Native => "⌨️ Key releases: reported by Windows, hold SPACE to talk",
-            Self::Enhanced => {
-                "⌨️ Key releases: reported (kitty keyboard protocol), hold SPACE to talk"
-            }
-            Self::Missing => {
-                "⌨️ Key releases: not reported by this terminal, talking stops 0.6 s after the last key repeat"
-            }
+            Self::Native => "⌨️ Key releases: reported by Windows",
+            Self::Enhanced => "⌨️ Key releases: reported (kitty keyboard protocol)",
+            Self::Missing => "⌨️ Key releases: not reported by this terminal",
         }
     }
 }
@@ -66,17 +65,46 @@ impl KeyReleases {
 #[derive(Debug, PartialEq, Eq)]
 enum Key {
     Quit,
-    SpaceDown,
-    SpaceUp,
+    Space(PttInput),
+    SwitchMode,
 }
 
 fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
     match (code, kind) {
-        (KeyCode::Char(' '), KeyEventKind::Press | KeyEventKind::Repeat) => Some(Key::SpaceDown),
-        (KeyCode::Char(' '), KeyEventKind::Release) => Some(Key::SpaceUp),
+        (KeyCode::Char(' '), KeyEventKind::Press) => Some(Key::Space(PttInput::Press)),
+        (KeyCode::Char(' '), KeyEventKind::Repeat) => Some(Key::Space(PttInput::Repeat)),
+        (KeyCode::Char(' '), KeyEventKind::Release) => Some(Key::Space(PttInput::Release)),
         (_, KeyEventKind::Release) => None,
         (KeyCode::Char('q' | 'Q') | KeyCode::Esc, _) => Some(Key::Quit),
+        (KeyCode::Char('t' | 'T'), _) => Some(Key::SwitchMode),
         _ => None,
+    }
+}
+
+/// Hold where the terminal reports releases, toggle where it doesn't,
+/// unless the user asked for one.
+fn ptt_mode(choice: PttChoice, releases: KeyReleases) -> PttMode {
+    match (choice, releases.reported()) {
+        (PttChoice::Toggle, _) | (PttChoice::Auto, false) => PttMode::Toggle,
+        (PttChoice::Auto | PttChoice::Hold, true) => PttMode::Hold,
+        (PttChoice::Hold, false) => PttMode::HoldWithTimeout {
+            timeout: RELEASE_GUESS,
+        },
+    }
+}
+
+fn other_mode(mode: PttMode, releases: KeyReleases) -> PttMode {
+    match mode {
+        PttMode::Toggle => ptt_mode(PttChoice::Hold, releases),
+        PttMode::Hold | PttMode::HoldWithTimeout { .. } => PttMode::Toggle,
+    }
+}
+
+fn mode_label(mode: PttMode) -> &'static str {
+    match mode {
+        PttMode::Hold => "HOLD SPACE to talk",
+        PttMode::HoldWithTimeout { .. } => "HOLD SPACE to talk (release guessed)",
+        PttMode::Toggle => "SPACE starts and stops talking",
     }
 }
 
@@ -109,16 +137,22 @@ pub struct App {
     port: u16,
     log: EventLog,
     transmitting: bool,
+    choice: PttChoice,
+    mode: PttMode,
+    ptt: PttController,
 }
 
 impl App {
-    pub fn new(name: String, local_ip: String, port: u16) -> Self {
+    pub fn new(name: String, local_ip: String, port: u16, choice: PttChoice) -> Self {
         Self {
             name,
             local_ip,
             port,
             log: EventLog::default(),
             transmitting: false,
+            choice,
+            mode: PttMode::Toggle,
+            ptt: PttController::new(PttMode::Toggle),
         }
     }
 
@@ -148,6 +182,9 @@ pub fn run(mut app: App, engine: &Engine, events: &Receiver<EngineEvent>) -> io:
     }
     tracing::info!(?releases, "key releases");
     app.note(releases.describe());
+    app.mode = ptt_mode(app.choice, releases);
+    app.ptt = PttController::new(app.mode);
+    app.note(format!("🎤 PTT: {}", mode_label(app.mode)));
     let result = run_app(&mut terminal, &mut app, engine, events, releases);
     if releases == KeyReleases::Enhanced {
         let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
@@ -164,8 +201,6 @@ fn run_app(
     releases: KeyReleases,
 ) -> io::Result<()> {
     let tick_rate = Duration::from_millis(50);
-    let mut last_space = Instant::now();
-    let mut release_works = releases.reported();
     loop {
         let snapshot = engine.snapshot();
         for event in events.try_iter() {
@@ -178,21 +213,25 @@ fn run_app(
         {
             match key_action(key.code, key.kind) {
                 Some(Key::Quit) => return Ok(()),
-                Some(Key::SpaceDown) => {
-                    last_space = Instant::now();
-                    set_talking(app, engine, true);
-                }
-                Some(Key::SpaceUp) => {
-                    release_works = true;
+                Some(Key::Space(input)) => feed(app, engine, input),
+                Some(Key::SwitchMode) => {
                     set_talking(app, engine, false);
+                    app.mode = other_mode(app.mode, releases);
+                    app.ptt = PttController::new(app.mode);
+                    app.log.push(format!("🔁 PTT: {}", mode_label(app.mode)));
                 }
                 None => {}
             }
         }
+        feed(app, engine, PttInput::Tick);
+    }
+}
 
-        if !release_works && app.transmitting && last_space.elapsed() > RELEASE_GUESS {
-            set_talking(app, engine, false);
-        }
+fn feed(app: &mut App, engine: &Engine, input: PttInput) {
+    match app.ptt.handle(input, Instant::now()) {
+        Some(PttChange::Started) => set_talking(app, engine, true),
+        Some(PttChange::Stopped) => set_talking(app, engine, false),
+        None => {}
     }
 }
 
@@ -264,7 +303,7 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
     render_ptt_status(f, left_chunks[1], app, snapshot);
     render_peers(f, left_chunks[2], snapshot);
     render_events(f, main_chunks[1], app);
-    render_footer(f, chunks[2]);
+    render_footer(f, chunks[2], app.mode);
 }
 
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
@@ -349,7 +388,7 @@ fn render_ptt_status(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnap
     .alignment(Alignment::Center)
     .block(
         Block::default()
-            .title("🎤 Push-to-Talk (Hold SPACE)")
+            .title(format!("🎤 Push-to-Talk ({})", mode_label(app.mode)))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if on { Color::Red } else { Color::White })),
     );
@@ -412,11 +451,14 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(list, area);
 }
 
-fn render_footer(f: &mut Frame, area: Rect) {
-    let footer_text = Paragraph::new("HOLD SPACEBAR to transmit | 'Q' or ESC to quit")
-        .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+fn render_footer(f: &mut Frame, area: Rect, mode: PttMode) {
+    let footer_text = Paragraph::new(format!(
+        "{} | T switch hold/toggle | Q or ESC quit",
+        mode_label(mode)
+    ))
+    .style(Style::default().fg(Color::Gray))
+    .alignment(Alignment::Center)
+    .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer_text, area);
 }
 
@@ -469,13 +511,52 @@ mod tests {
     #[test]
     fn only_space_cares_about_releases() {
         use KeyEventKind::{Press, Release, Repeat};
-        assert_eq!(key_action(KeyCode::Char(' '), Press), Some(Key::SpaceDown));
-        assert_eq!(key_action(KeyCode::Char(' '), Repeat), Some(Key::SpaceDown));
-        assert_eq!(key_action(KeyCode::Char(' '), Release), Some(Key::SpaceUp));
+        let space = |kind| key_action(KeyCode::Char(' '), kind);
+        assert_eq!(space(Press), Some(Key::Space(PttInput::Press)));
+        assert_eq!(space(Repeat), Some(Key::Space(PttInput::Repeat)));
+        assert_eq!(space(Release), Some(Key::Space(PttInput::Release)));
         assert_eq!(key_action(KeyCode::Char('q'), Press), Some(Key::Quit));
         assert_eq!(key_action(KeyCode::Esc, Press), Some(Key::Quit));
+        assert_eq!(key_action(KeyCode::Char('T'), Press), Some(Key::SwitchMode));
         assert_eq!(key_action(KeyCode::Char('q'), Release), None);
+        assert_eq!(key_action(KeyCode::Char('t'), Release), None);
         assert_eq!(key_action(KeyCode::Char('x'), Press), None);
+    }
+
+    #[test]
+    fn auto_holds_where_releases_arrive_and_toggles_elsewhere() {
+        use KeyReleases::{Enhanced, Missing, Native};
+        let guess = PttMode::HoldWithTimeout {
+            timeout: RELEASE_GUESS,
+        };
+        assert_eq!(ptt_mode(PttChoice::Auto, Native), PttMode::Hold);
+        assert_eq!(ptt_mode(PttChoice::Auto, Enhanced), PttMode::Hold);
+        assert_eq!(ptt_mode(PttChoice::Auto, Missing), PttMode::Toggle);
+        assert_eq!(ptt_mode(PttChoice::Toggle, Native), PttMode::Toggle);
+        assert_eq!(ptt_mode(PttChoice::Hold, Native), PttMode::Hold);
+        assert_eq!(ptt_mode(PttChoice::Hold, Missing), guess);
+    }
+
+    #[test]
+    fn t_swaps_between_hold_and_toggle() {
+        use KeyReleases::{Missing, Native};
+        assert_eq!(other_mode(PttMode::Hold, Native), PttMode::Toggle);
+        assert_eq!(other_mode(PttMode::Toggle, Native), PttMode::Hold);
+        assert_eq!(
+            other_mode(PttMode::Toggle, Missing),
+            PttMode::HoldWithTimeout {
+                timeout: RELEASE_GUESS
+            }
+        );
+        assert_eq!(
+            other_mode(
+                PttMode::HoldWithTimeout {
+                    timeout: RELEASE_GUESS
+                },
+                Missing
+            ),
+            PttMode::Toggle
+        );
     }
 
     #[test]
