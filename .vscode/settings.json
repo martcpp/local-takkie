@@ -1,0 +1,5 @@
+{
+  // Its own build folder (target/rust-analyzer), so it never holds the lock
+  // that `cargo build` and `cargo xtask ci` wait on.
+  "rust-analyzer.cargo.targetDir": true
+}
