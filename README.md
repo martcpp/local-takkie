@@ -57,6 +57,7 @@ green dot while they talk. Press `?` in the app for the list of keys:
 | `+` / `-` | Volume up or down |
 | `↑` / `↓` | Pick someone in the peer list |
 | `X` | Mute or unmute the picked person, for you only |
+| `B` | Beeps on or off |
 | `D` | Show the microphone and speaker in use |
 | `1`–`9`, `0` | Switch to channel 1 to 10 |
 | `P` | Set or clear this channel's passphrase |
@@ -66,6 +67,10 @@ green dot while they talk. Press `?` in the app for the list of keys:
 Your name, channel and devices are kept in a settings file, and the app shows
 where it is when it starts. Everyone on the same channel hears each other;
 choose one with the digit keys or `--channel`.
+
+**Beeps.** Press `B` to hear a short tone when someone finishes talking and
+another when you start. They are off by default, your choice is remembered,
+and they are made on your own device, so nobody else hears yours.
 
 **Private channels.** A channel is open by default: anyone on the same
 network can listen and talk. Press `P` and type a passphrase to make it

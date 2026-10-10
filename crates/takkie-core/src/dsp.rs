@@ -58,6 +58,53 @@ pub fn soft_limit(samples: &mut [f32]) {
     }
 }
 
+const FADE_MS: usize = 5;
+
+/// A short sine tone with faded edges, made a buffer at a time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tone {
+    step: f32,
+    phase: f32,
+    at: usize,
+    len: usize,
+    fade: usize,
+}
+
+impl Tone {
+    /// A tone of `frequency` hertz lasting `millis` at `sample_rate`.
+    #[must_use]
+    pub fn new(frequency: f32, millis: usize, sample_rate: u32) -> Self {
+        let rate = sample_rate.max(1) as usize;
+        let len = rate * millis / 1_000;
+        Self {
+            step: std::f32::consts::TAU * frequency / rate as f32,
+            phase: 0.0,
+            at: 0,
+            len,
+            fade: (rate * FADE_MS / 1_000).clamp(1, (len / 2).max(1)),
+        }
+    }
+
+    /// Adds the next samples into `out` with peak level `gain`. A gain of 0
+    /// moves the tone on without being heard.
+    pub fn mix_into(&mut self, out: &mut [f32], gain: f32) {
+        let left = self.len.saturating_sub(self.at);
+        for sample in out.iter_mut().take(left) {
+            let from_edge = self.at.min(self.len - 1 - self.at);
+            let edge = (from_edge as f32 / self.fade as f32).min(1.0);
+            *sample += gain * edge * self.phase.sin();
+            self.phase = (self.phase + self.step) % std::f32::consts::TAU;
+            self.at += 1;
+        }
+    }
+
+    /// Whether all of it has been made.
+    #[must_use]
+    pub fn is_done(&self) -> bool {
+        self.at >= self.len
+    }
+}
+
 /// Loudness of one frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Level {
@@ -87,6 +134,46 @@ impl Level {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tone_has_its_pitch_length_and_soft_edges() {
+        let mut tone = Tone::new(1_000.0, 100, 48_000);
+        let mut out = vec![0.0_f32; 6_000];
+        tone.mix_into(&mut out[..1_000], 0.5);
+        assert!(!tone.is_done());
+        tone.mix_into(&mut out[1_000..], 0.5);
+        assert!(tone.is_done());
+
+        let (sound, after) = out.split_at(4_800);
+        assert!(after.iter().all(|sample| *sample == 0.0));
+        let crossings = sound
+            .windows(2)
+            .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+            .count();
+        assert!((198..=202).contains(&crossings), "{crossings} crossings");
+        let peak = Level::of(sound).peak;
+        assert!((peak - 0.5).abs() < 0.01, "peak {peak}");
+        assert!(Level::of(&sound[..24]).peak < 0.06);
+        assert!(Level::of(&sound[4_776..]).peak < 0.06);
+    }
+
+    #[test]
+    fn a_tone_adds_to_what_is_there_and_can_pass_unheard() {
+        let mut out = [0.25_f32; 480];
+        let mut silent = Tone::new(1_000.0, 10, 48_000);
+        silent.mix_into(&mut out, 0.0);
+        assert!(silent.is_done());
+        assert_eq!(out, [0.25; 480]);
+
+        let mut heard = Tone::new(1_000.0, 10, 48_000);
+        heard.mix_into(&mut out, 0.5);
+        assert!(out.iter().any(|sample| (*sample - 0.25).abs() > 0.2));
+        heard.mix_into(&mut out, 0.5);
+
+        let mut empty = Tone::new(1_000.0, 0, 48_000);
+        assert!(empty.is_done());
+        empty.mix_into(&mut out, 0.5);
+    }
 
     #[test]
     fn mono_downmix_is_a_copy() {
