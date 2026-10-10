@@ -10,13 +10,14 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwap;
 use crossbeam_channel::Receiver;
 
-use takkie_core::dsp::{apply_gain, mix_into, soft_limit};
+use takkie_core::dsp::{Level, apply_gain, mix_into, soft_limit};
 use takkie_core::jitter::{JitterBuffer, Playout};
 use takkie_core::{PeerId, Seq};
 
 use super::codec::{CodecError, VoiceDecoder};
 use super::io::AudioSink;
 use super::resample::{FRAME, ResampleError, Resampler};
+use super::tx::LevelMeter;
 
 /// An audio packet from the network.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,6 +134,8 @@ pub struct MixShared {
     pub counters: Arc<MixCounters>,
     /// Senders whose voice is playing, published by the mix thread.
     pub talking: Arc<ArcSwap<Vec<PeerId>>>,
+    /// What goes to the speaker, after volume and mute.
+    pub level: Arc<LevelMeter>,
 }
 
 /// Every sender's buffer and decoder, mixed one frame at a time.
@@ -142,6 +145,7 @@ pub struct Mixer {
     counters: Arc<MixCounters>,
     controls: Arc<MixControls>,
     transmitting: Arc<AtomicBool>,
+    level: Arc<LevelMeter>,
 }
 
 impl Mixer {
@@ -169,6 +173,7 @@ impl Mixer {
             counters: shared.counters,
             controls: shared.controls,
             transmitting: shared.transmitting,
+            level: shared.level,
         }
     }
 
@@ -291,6 +296,7 @@ impl Mixer {
         if self.controls.is_muted() || talking_over {
             out.fill(0.0);
         }
+        self.level.set(Level::of(out));
     }
 }
 

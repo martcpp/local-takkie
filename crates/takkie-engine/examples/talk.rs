@@ -130,10 +130,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let s = engine.snapshot();
             writeln!(
                 out,
-                "   [ch {} | peers {} | mic {:.2} | buffer {} ms | sent {} | received {} | concealed {} | underruns {}]",
+                "   [ch {} | peers {} | mic {:.2} | spk {:.2} | buffer {} ms | sent {} | received {} | concealed {} | underruns {}]",
                 s.channel,
                 s.peers.len(),
                 s.mic.rms,
+                s.speaker.rms,
                 s.buffer_ms,
                 s.stats.packets_sent,
                 s.stats.packets_received,
