@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 anyhow = "1.0"
 semver = "1"
-toml_edit = "0.24"
+toml_edit = "0.25"
 
 [lints]
 workspace = true

@@ -4833,7 +4833,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.21",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
@@ -5180,15 +5180,15 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.24.0+spec-1.1.0"
+version = "0.25.15+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c740b185920170a6d9191122cafef7010bd6270a3824594bff6784c04d7f09e"
+checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
 dependencies = [
  "indexmap 2.14.2",
- "toml_datetime 0.7.5+spec-1.1.0",
+ "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
  "toml_writer",
- "winnow 0.7.14",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -6250,6 +6250,9 @@ name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "winreg"
@@ -6344,7 +6347,7 @@ version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "semver",
- "toml_edit 0.24.0+spec-1.1.0",
+ "toml_edit 0.25.15+spec-1.1.0",
 ]
 
 [[package]]
