@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use super::address::{LocalNet, best_address, local_networks};
 use super::peers::PeerMessage;
+use crate::threads::{STOP_WITHIN, join_within};
 
 /// The service every takkie announces.
 pub const SERVICE: &str = "_takkie._udp.local.";
@@ -263,7 +264,7 @@ impl Drop for Browser {
         let _ = self.daemon.stop_browse(SERVICE);
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }

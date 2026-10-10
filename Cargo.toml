@@ -10,8 +10,10 @@ repository = "https://github.com/martcpp/local-takkie"
 publish = false
 
 [workspace.dependencies]
-cpal = "0.17.0"
+crossbeam-channel = "0.5.17"
+takkie-core = { version = "0.1.1", path = "crates/takkie-core" }
 thiserror = "2"
+tracing = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -19,8 +21,8 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
-# unwrap_used and expect_used join here in E8.2, once the prototype code is
-# replaced. takkie-core already denies them.
+unwrap_used = "warn"
+expect_used = "warn"
 panic = "warn"
 todo = "warn"
 dbg_macro = "warn"

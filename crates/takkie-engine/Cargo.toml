@@ -8,17 +8,17 @@ publish.workspace = true
 
 [dependencies]
 arc-swap = "1"
-cpal = { workspace = true }
-crossbeam-channel = "0.5.17"
+cpal = "0.17.0"
+crossbeam-channel = { workspace = true }
 if-addrs = "0.15"
-log = "0.4"
 mdns-sd = "0.21"
 opus = "0.4"
 rtrb = "0.4"
 rubato = "5.0.1"
 socket2 = "0.6"
-takkie-core = { version = "0.1.1", path = "../takkie-core" }
+takkie-core = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [lints]
 workspace = true

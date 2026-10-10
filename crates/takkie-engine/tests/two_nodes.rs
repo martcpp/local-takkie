@@ -2,18 +2,18 @@
 //! devices on a real clock: A talks, B listens. No mDNS; A has B as a
 //! static peer.
 
+use std::error::Error;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use crossbeam_channel::unbounded;
 use takkie_core::PeerId;
-use takkie_engine::audio::fake::{FakeSink, FakeSource, Signal};
+use takkie_engine::audio::fake::{FakeSink, FakeSource, LiveSink, LiveSource, Signal};
 use takkie_engine::audio::mix::{MixShared, MixThread};
 use takkie_engine::audio::tx::{LevelMeter, TxThread};
-use takkie_engine::audio::{AudioSink, AudioSource};
 use takkie_engine::net::hello::HelloThread;
 use takkie_engine::net::peers::{PEER_TIMEOUT, PeerOutputs, PeerThread, Peers};
 use takkie_engine::net::rx::{RxOutputs, RxThread};
@@ -24,64 +24,9 @@ const RATE: u32 = 48_000;
 const TONE: f32 = 440.0;
 const AMPLITUDE: f32 = 0.4;
 
-struct LiveSource {
-    source: FakeSource,
-    start: Instant,
-    given: usize,
-}
-
-impl AudioSource for LiveSource {
-    fn sample_rate(&self) -> u32 {
-        RATE
-    }
-
-    fn read(&mut self, out: &mut [f32]) -> usize {
-        let due = (self.start.elapsed().as_secs_f64() * f64::from(RATE)) as usize;
-        self.source.advance(due - self.given);
-        self.given = due;
-        self.source.read(out)
-    }
-}
-
-type Speaker = Arc<Mutex<(FakeSink, usize)>>;
-
-struct LiveSink {
-    speaker: Speaker,
-    start: Instant,
-}
-
-impl LiveSink {
-    fn catch_up(&self) -> std::sync::MutexGuard<'_, (FakeSink, usize)> {
-        let mut speaker = self.speaker.lock().unwrap();
-        let due = (self.start.elapsed().as_secs_f64() * f64::from(RATE)) as usize;
-        let (sink, played) = &mut *speaker;
-        sink.play(due - *played);
-        *played = due;
-        speaker
-    }
-}
-
-impl AudioSink for LiveSink {
-    fn sample_rate(&self) -> u32 {
-        RATE
-    }
-
-    fn free(&self) -> usize {
-        self.catch_up().0.free()
-    }
-
-    fn queued(&self) -> usize {
-        self.catch_up().0.queued()
-    }
-
-    fn write(&mut self, samples: &[f32]) -> usize {
-        self.catch_up().0.write(samples)
-    }
-}
-
 struct Node {
     addr: SocketAddr,
-    speaker: Speaker,
+    speaker: LiveSink,
     _threads: (
         TxThread,
         SendThread,
@@ -92,41 +37,40 @@ struct Node {
     ),
 }
 
-fn node(id: u64, channel: u8, talking: bool, static_peers: Vec<SocketAddr>) -> Node {
-    let start = Instant::now();
+fn node(
+    id: u64,
+    channel: u8,
+    talking: bool,
+    static_peers: Vec<SocketAddr>,
+) -> Result<Node, Box<dyn Error>> {
     let me = PeerId::new(id);
-    let transport: Arc<dyn Transport> = Arc::new(UdpTransport::bind(0).unwrap());
+    let transport: Arc<dyn Transport> = Arc::new(UdpTransport::bind(0)?);
     let addr = SocketAddr::from(([127, 0, 0, 1], transport.local_addr().port()));
     let channel = Arc::new(AtomicU8::new(channel));
     let targets = Arc::new(ArcSwap::from_pointee(Vec::new()));
     let transmitting = Arc::new(AtomicBool::new(talking));
 
-    let mic = LiveSource {
-        source: FakeSource::new(
-            RATE,
-            Signal::Sine {
-                frequency: TONE,
-                amplitude: AMPLITUDE,
-            },
-        ),
-        start,
-        given: 0,
-    };
+    let mic = LiveSource::new(FakeSource::new(
+        RATE,
+        Signal::Sine {
+            frequency: TONE,
+            amplitude: AMPLITUDE,
+        },
+    ));
     let (tx_events, tx_out) = unbounded();
     let tx = TxThread::spawn(
         Box::new(mic),
         Arc::clone(&transmitting),
         Arc::new(LevelMeter::default()),
         tx_events,
-    )
-    .unwrap();
+    )?;
     let sender = Arc::new(PacketSender::new(
         Arc::clone(&transport),
         me,
         Arc::clone(&channel),
         Arc::clone(&targets),
     ));
-    let send = SendThread::spawn(tx_out, Arc::clone(&sender)).unwrap();
+    let send = SendThread::spawn(tx_out, Arc::clone(&sender))?;
 
     let (audio, audio_out) = unbounded();
     let (news, news_out) = unbounded();
@@ -138,45 +82,43 @@ fn node(id: u64, channel: u8, talking: bool, static_peers: Vec<SocketAddr>) -> N
             audio: audio.clone(),
             peers: news,
         },
-    )
-    .unwrap();
-    let speaker: Speaker = Arc::new(Mutex::new((FakeSink::new(RATE, RATE as usize / 5), 0)));
-    let sink = LiveSink {
-        speaker: Arc::clone(&speaker),
-        start,
-    };
+    )?;
+    let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
     let mix = MixThread::spawn(
         audio_out,
-        Box::new(sink),
+        Box::new(speaker.clone()),
         MixShared {
             transmitting,
             ..MixShared::default()
         },
-    )
-    .unwrap();
+    )?;
     let (events, _) = unbounded();
+    let table = Peers::new(channel, targets, PEER_TIMEOUT);
+    let known = table.view();
     let peers = PeerThread::spawn(
         news_out,
-        Peers::new(channel, targets, PEER_TIMEOUT),
+        table,
         PeerOutputs {
             events,
             mixer: audio,
         },
-    )
-    .unwrap();
-    let hello =
-        HelloThread::spawn(sender, "node", Duration::from_millis(200), static_peers).unwrap();
-    Node {
+    )?;
+    let hello = HelloThread::spawn(
+        sender,
+        "node",
+        Duration::from_millis(200),
+        known,
+        static_peers,
+    )?;
+    Ok(Node {
         addr,
         speaker,
         _threads: (tx, send, rx, mix, peers, hello),
-    }
+    })
 }
 
 fn last_second(node: &Node) -> Vec<f32> {
-    let speaker = node.speaker.lock().unwrap();
-    let played = speaker.0.played();
-    played[played.len().saturating_sub(RATE as usize)..].to_vec()
+    node.speaker.last(RATE as usize)
 }
 
 fn rms(samples: &[f32]) -> f32 {
@@ -192,9 +134,9 @@ fn frequency(samples: &[f32]) -> f32 {
 }
 
 #[test]
-fn b_hears_a_on_the_same_channel() {
-    let b = node(2, 3, false, Vec::new());
-    let a = node(1, 3, true, vec![b.addr]);
+fn b_hears_a_on_the_same_channel() -> Result<(), Box<dyn Error>> {
+    let b = node(2, 3, false, Vec::new())?;
+    let a = node(1, 3, true, vec![b.addr])?;
     std::thread::sleep(Duration::from_millis(2_500));
     let heard = last_second(&b);
     drop(a);
@@ -208,16 +150,18 @@ fn b_hears_a_on_the_same_channel() {
     );
     let pitch = frequency(&heard);
     assert!((pitch - TONE).abs() / TONE < 0.02, "B heard {pitch} Hz");
+    Ok(())
 }
 
 #[test]
-fn b_hears_nothing_from_another_channel() {
-    let b = node(2, 4, false, Vec::new());
-    let a = node(1, 3, true, vec![b.addr]);
+fn b_hears_nothing_from_another_channel() -> Result<(), Box<dyn Error>> {
+    let b = node(2, 4, false, Vec::new())?;
+    let a = node(1, 3, true, vec![b.addr])?;
     std::thread::sleep(Duration::from_millis(2_500));
     let heard = last_second(&b);
     drop(a);
 
     assert_eq!(heard.len(), RATE as usize);
     assert!(heard.iter().all(|s| *s == 0.0), "B heard {}", rms(&heard));
+    Ok(())
 }

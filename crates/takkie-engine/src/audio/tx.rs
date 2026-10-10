@@ -12,6 +12,7 @@ use takkie_core::dsp::Level;
 use super::codec::{CodecError, VoiceEncoder};
 use super::io::AudioSource;
 use super::resample::{FRAME, ResampleError, Resampler};
+use crate::threads::{STOP_WITHIN, join_within};
 
 /// Where a sent frame sits in the stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,7 +183,7 @@ impl TxThread {
                         }
                         Ok(None) => thread::sleep(Duration::from_millis(5)),
                         Err(error) => {
-                            log::error!("tx stopped: {error}");
+                            tracing::error!("tx stopped: {error}");
                             return;
                         }
                     }
@@ -199,7 +200,7 @@ impl Drop for TxThread {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }

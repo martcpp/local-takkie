@@ -16,6 +16,7 @@ use takkie_core::{ChannelId, PeerId, Seq};
 
 use super::transport::Transport;
 use crate::audio::tx::TxEvent;
+use crate::threads::{STOP_WITHIN, join_within};
 
 const MAX_DATAGRAM: usize = 1_500;
 
@@ -80,12 +81,6 @@ impl PacketSender {
     #[must_use]
     pub fn counters(&self) -> Arc<SendCounters> {
         Arc::clone(&self.counters)
-    }
-
-    /// Whether `addr` is on the current send list.
-    #[must_use]
-    pub fn is_target(&self, addr: SocketAddr) -> bool {
-        self.peers.load().contains(&addr)
     }
 
     /// Sends one packet to every peer on our channel.
@@ -180,7 +175,7 @@ impl SendThread {
                                 &packet.payload,
                             );
                         }
-                        Ok(TxEvent::Error(error)) => log::warn!("{error}"),
+                        Ok(TxEvent::Error(error)) => tracing::warn!("{error}"),
                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
                         Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
                     }
@@ -197,7 +192,7 @@ impl Drop for SendThread {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }
@@ -214,6 +209,16 @@ mod tests {
         let mut buf = [0; 2048];
         let (len, _) = transport.recv_from(&mut buf).ok()??;
         Header::decode(&buf[..len]).ok().map(|(header, _)| header)
+    }
+
+    fn recv_soon(transport: &MemoryTransport) -> Option<Header> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let header = recv(transport);
+            if header.is_some() || std::time::Instant::now() >= deadline {
+                return header;
+            }
+        }
     }
 
     struct Setup {
@@ -339,7 +344,7 @@ mod tests {
                 end: true,
             }))
             .unwrap();
-        let header = recv(&s.others[0]).unwrap();
+        let header = recv_soon(&s.others[0]).unwrap();
         drop(thread);
         assert_eq!(header.kind, PacketKind::Audio);
         assert_eq!(header.timestamp, 1_920);

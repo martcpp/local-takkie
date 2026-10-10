@@ -1,9 +1,12 @@
 //! Fake devices for tests. Time only moves when a test says so: a source
 //! hands out samples after [`FakeSource::advance`], and a sink plays them
-//! on [`FakeSink::play`].
+//! on [`FakeSink::play`]. [`LiveSource`] and [`LiveSink`] tie them to the
+//! wall clock instead, for tests that run real threads.
 
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use super::io::{AudioSink, AudioSource};
 
@@ -158,6 +161,107 @@ impl AudioSink for FakeSink {
         let count = samples.len().min(self.free());
         self.queued.extend(samples.iter().take(count));
         count
+    }
+}
+
+fn samples_since(start: Instant, rate: u32) -> usize {
+    (start.elapsed().as_secs_f64() * f64::from(rate)) as usize
+}
+
+/// A [`FakeSource`] whose samples become ready as real time passes.
+#[derive(Debug)]
+pub struct LiveSource {
+    source: FakeSource,
+    start: Instant,
+    given: usize,
+}
+
+impl LiveSource {
+    /// Starts the clock now.
+    #[must_use]
+    pub fn new(source: FakeSource) -> Self {
+        Self {
+            source,
+            start: Instant::now(),
+            given: 0,
+        }
+    }
+}
+
+impl AudioSource for LiveSource {
+    fn sample_rate(&self) -> u32 {
+        self.source.rate
+    }
+
+    fn read(&mut self, out: &mut [f32]) -> usize {
+        let due = samples_since(self.start, self.source.rate);
+        self.source.advance(due.saturating_sub(self.given));
+        self.given = due;
+        self.source.read(out)
+    }
+}
+
+#[derive(Debug)]
+struct Played {
+    sink: FakeSink,
+    upto: usize,
+}
+
+/// A [`FakeSink`] played by the real clock. Clones share the same sink, so
+/// a test can keep one and hand the other to the engine.
+#[derive(Clone, Debug)]
+pub struct LiveSink {
+    played: Arc<Mutex<Played>>,
+    rate: u32,
+    start: Instant,
+}
+
+impl LiveSink {
+    /// Starts the clock now.
+    #[must_use]
+    pub fn new(sink: FakeSink) -> Self {
+        Self {
+            rate: sink.rate,
+            played: Arc::new(Mutex::new(Played { sink, upto: 0 })),
+            start: Instant::now(),
+        }
+    }
+
+    /// The last `samples` samples played.
+    #[must_use]
+    pub fn last(&self, samples: usize) -> Vec<f32> {
+        self.with(|sink| {
+            let played = sink.played();
+            played[played.len().saturating_sub(samples)..].to_vec()
+        })
+        .unwrap_or_default()
+    }
+
+    fn with<T>(&self, f: impl FnOnce(&mut FakeSink) -> T) -> Option<T> {
+        let mut played = self.played.lock().ok()?;
+        let due = samples_since(self.start, self.rate);
+        let Played { sink, upto } = &mut *played;
+        sink.play(due.saturating_sub(*upto));
+        *upto = due;
+        Some(f(sink))
+    }
+}
+
+impl AudioSink for LiveSink {
+    fn sample_rate(&self) -> u32 {
+        self.rate
+    }
+
+    fn free(&self) -> usize {
+        self.with(|sink| sink.free()).unwrap_or(0)
+    }
+
+    fn queued(&self) -> usize {
+        self.with(|sink| sink.queued()).unwrap_or(0)
+    }
+
+    fn write(&mut self, samples: &[f32]) -> usize {
+        self.with(|sink| sink.write(samples)).unwrap_or(0)
     }
 }
 

@@ -443,9 +443,10 @@ possible.
   fails the build. Tests may use unwrap/expect (`allow-unwrap-in-tests` and
   `allow-expect-in-tests` in `clippy.toml`, not `#[allow]`).
 
-  `unwrap_used` and `expect_used` are staged: `takkie-core` denies them from
-  the start, and they join `[workspace.lints]` in E8.2, once the prototype
-  code that still uses them is replaced. No `#[allow]` is used to get there.
+  `unwrap_used` and `expect_used` were staged: `takkie-core` denied them from
+  the start, and they joined `[workspace.lints]` in E8.2, once the prototype
+  code was replaced (#220). Integration-test helpers return `Result` instead,
+  since the test allowance only covers `#[test]` functions.
 - **Formatting:** `rustfmt.toml` checked in, and CI runs
   `cargo fmt --all --check`.
 - **Release profile:** `lto = "thin"`, `codegen-units = 1`, `strip = true`.
