@@ -1,1 +1,3 @@
 *.snap text eol=lf
+# Run by sh on Linux and macOS, which rejects CRLF.
+gradlew text eol=lf

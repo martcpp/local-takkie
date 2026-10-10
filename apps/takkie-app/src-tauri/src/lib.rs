@@ -52,11 +52,12 @@ fn computer_name() -> String {
 ///
 /// # Errors
 /// [`tauri::Error`] if the app can't start.
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() -> tauri::Result<()> {
     // Fails only if a logger is already set, which is fine.
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        // logcat shows colour codes as text.
+        .with_ansi(!cfg!(target_os = "android"))
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
@@ -97,4 +98,13 @@ pub fn run() -> tauri::Result<()> {
         }
     });
     Ok(())
+}
+
+// Android loads the library and calls this; there is no `main` to report to.
+#[cfg(mobile)]
+#[tauri::mobile_entry_point]
+fn start() {
+    if let Err(error) = run() {
+        tracing::error!("the app couldn't start: {error}");
+    }
 }
