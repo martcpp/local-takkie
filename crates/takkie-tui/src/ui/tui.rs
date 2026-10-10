@@ -14,11 +14,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, LineGauge, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, LineGauge, List, ListItem, Paragraph},
 };
 use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
 use takkie_core::{ChannelId, PeerId};
-use takkie_engine::{Engine, EngineEvent, EngineSnapshot, PeerInfo};
+use takkie_engine::{Direction as Device, Engine, EngineEvent, EngineSnapshot, PeerInfo};
 
 use crate::settings::PttMode as PttChoice;
 
@@ -62,11 +62,28 @@ impl KeyReleases {
     }
 }
 
+/// Every key the app answers to, as the help popup lists them.
+const BINDINGS: [(&str, &str); 8] = [
+    ("SPACE", "talk (hold or toggle, see the footer)"),
+    ("T", "switch between hold and toggle"),
+    ("M", "mute or unmute what you hear"),
+    ("+ / -", "volume up or down"),
+    ("D", "show the microphone and speaker in use"),
+    ("1-9, 0", "channel 1 to 10 (not yet: use --channel)"),
+    ("?", "this help"),
+    ("Q / Esc", "quit"),
+];
+
 #[derive(Debug, PartialEq, Eq)]
 enum Key {
     Quit,
     Space(PttInput),
     SwitchMode,
+    Help,
+    Mute,
+    Volume(i8),
+    Devices,
+    Channel,
 }
 
 fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
@@ -77,8 +94,20 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         (_, KeyEventKind::Release) => None,
         (KeyCode::Char('q' | 'Q') | KeyCode::Esc, _) => Some(Key::Quit),
         (KeyCode::Char('t' | 'T'), _) => Some(Key::SwitchMode),
+        (KeyCode::Char('?'), _) => Some(Key::Help),
+        (KeyCode::Char('m' | 'M'), _) => Some(Key::Mute),
+        (KeyCode::Char('+' | '='), _) => Some(Key::Volume(1)),
+        (KeyCode::Char('-' | '_'), _) => Some(Key::Volume(-1)),
+        (KeyCode::Char('d' | 'D'), _) => Some(Key::Devices),
+        (KeyCode::Char('0'..='9'), _) => Some(Key::Channel),
         _ => None,
     }
+}
+
+/// One 10% step up or down, kept between 0% and 200%.
+fn stepped(volume: f32, steps: i8) -> f32 {
+    let tenths = (volume * 10.0).round() + f32::from(steps);
+    tenths.clamp(0.0, 20.0) / 10.0
 }
 
 /// Hold where the terminal reports releases, toggle where it doesn't,
@@ -140,6 +169,9 @@ pub struct App {
     choice: PttChoice,
     mode: PttMode,
     ptt: PttController,
+    help: bool,
+    mic: Option<String>,
+    speaker: Option<String>,
 }
 
 impl App {
@@ -153,6 +185,24 @@ impl App {
             choice,
             mode: PttMode::Toggle,
             ptt: PttController::new(PttMode::Toggle),
+            help: false,
+            mic: None,
+            speaker: None,
+        }
+    }
+
+    fn remember_device(&mut self, event: &EngineEvent) {
+        let (direction, state) = match event {
+            EngineEvent::DeviceStarted {
+                direction,
+                description,
+            } => (*direction, description.clone()),
+            EngineEvent::DeviceLost(direction) => (*direction, "lost, retrying".to_owned()),
+            _ => return,
+        };
+        match direction {
+            Device::Input => self.mic = Some(state),
+            Device::Output => self.speaker = Some(state),
         }
     }
 
@@ -210,6 +260,7 @@ fn run_app(
     loop {
         let snapshot = engine.snapshot();
         for event in events.try_iter() {
+            app.remember_device(&event);
             app.log.push(describe(&event, &snapshot));
         }
         for line in panel.try_iter() {
@@ -221,14 +272,40 @@ fn run_app(
             && let Event::Key(key) = event::read()?
         {
             match key_action(key.code, key.kind) {
-                Some(Key::Quit) => return Ok(()),
                 Some(Key::Space(input)) => feed(app, engine, input),
+                _ if app.help => {
+                    if key.kind != KeyEventKind::Release {
+                        app.help = false;
+                    }
+                }
+                Some(Key::Quit) => return Ok(()),
                 Some(Key::SwitchMode) => {
                     set_talking(app, engine, false);
                     app.mode = other_mode(app.mode, releases);
                     app.ptt = PttController::new(app.mode);
                     app.log.push(format!("🔁 PTT: {}", mode_label(app.mode)));
                 }
+                Some(Key::Help) => app.help = true,
+                Some(Key::Mute) => {
+                    let muted = !snapshot.muted;
+                    engine.set_muted(muted);
+                    app.log.push(if muted { "🔇 Muted" } else { "🔊 Unmuted" });
+                }
+                Some(Key::Volume(steps)) => {
+                    let volume = stepped(snapshot.volume, steps);
+                    engine.set_volume(volume);
+                    app.log.push(format!("🔉 Volume {:.0}%", volume * 100.0));
+                }
+                Some(Key::Devices) => {
+                    let shown = |device: &Option<String>| {
+                        device.clone().unwrap_or_else(|| "not running".to_owned())
+                    };
+                    app.log.push(format!("🎤 Mic: {}", shown(&app.mic)));
+                    app.log.push(format!("🔈 Speaker: {}", shown(&app.speaker)));
+                }
+                Some(Key::Channel) => app
+                    .log
+                    .push("🔢 Channel keys aren't active yet, start with --channel"),
                 None => {}
             }
         }
@@ -311,6 +388,44 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
     render_levels(f, left[2], snapshot);
     render_events(f, columns[1], app);
     render_footer(f, rows[2], app.mode);
+    if app.help {
+        render_help(f, f.area());
+    }
+}
+
+fn render_help(f: &mut Frame, screen: Rect) {
+    let width = 62.min(screen.width);
+    let height = (BINDINGS.len() as u16 + 2).min(screen.height);
+    let area = Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    );
+    let lines: Vec<Line> = BINDINGS
+        .iter()
+        .map(|(keys, what)| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {keys:<9}"),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(*what),
+            ])
+        })
+        .collect();
+    f.render_widget(Clear, area);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title("❓ Keys (any key closes)")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        ),
+        area,
+    );
 }
 
 fn render_header(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot) {
@@ -409,6 +524,12 @@ fn render_levels(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot) {
         Paragraph::new(Line::from(vec![
             Span::styled("Buffer  ", Style::default().fg(Color::Gray)),
             Span::raw(format!("{} ms", snapshot.buffer_ms)),
+            Span::styled("    Volume  ", Style::default().fg(Color::Gray)),
+            Span::raw(format!("{:.0}%", snapshot.volume * 100.0)),
+            Span::styled(
+                if snapshot.muted { "  MUTED" } else { "" },
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
         ])),
         rows[2],
     );
@@ -507,13 +628,10 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_footer(f: &mut Frame, area: Rect, mode: PttMode) {
-    let footer_text = Paragraph::new(format!(
-        "{} | T switch hold/toggle | Q or ESC quit",
-        mode_label(mode)
-    ))
-    .style(Style::default().fg(Color::Gray))
-    .alignment(Alignment::Center)
-    .block(Block::default().borders(Borders::ALL));
+    let footer_text = Paragraph::new(format!("{} | ? keys | Q or ESC quit", mode_label(mode)))
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer_text, area);
 }
 
@@ -546,6 +664,85 @@ mod tests {
             talking,
             ..kitchen()
         }
+    }
+
+    #[test]
+    fn every_key_maps_to_its_action() {
+        use KeyEventKind::{Press, Release};
+        let press = |c| key_action(KeyCode::Char(c), Press);
+        assert_eq!(press('?'), Some(Key::Help));
+        assert_eq!(press('m'), Some(Key::Mute));
+        assert_eq!(press('+'), Some(Key::Volume(1)));
+        assert_eq!(press('='), Some(Key::Volume(1)));
+        assert_eq!(press('-'), Some(Key::Volume(-1)));
+        assert_eq!(press('D'), Some(Key::Devices));
+        assert_eq!(press('1'), Some(Key::Channel));
+        assert_eq!(press('0'), Some(Key::Channel));
+        assert_eq!(key_action(KeyCode::Char('m'), Release), None);
+    }
+
+    #[test]
+    fn volume_moves_in_ten_percent_steps_within_limits() {
+        assert!((stepped(1.0, 1) - 1.1).abs() < 1e-6);
+        assert!((stepped(1.0, -1) - 0.9).abs() < 1e-6);
+        assert_eq!(stepped(2.0, 1), 2.0);
+        assert_eq!(stepped(0.0, -1), 0.0);
+        assert!((stepped(0.30000004, 1) - 0.4).abs() < 1e-6);
+    }
+
+    fn screen(app: &App, snapshot: &EngineSnapshot) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|f| ui(f, app, snapshot)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .map(|at| buffer[at].symbol())
+            .collect()
+    }
+
+    fn app() -> App {
+        App::new(
+            "Kitchen".into(),
+            "192.168.1.2".into(),
+            5000,
+            PttChoice::Auto,
+        )
+    }
+
+    #[test]
+    fn the_help_popup_lists_every_binding() {
+        let mut app = app();
+        let quiet = snapshot(Vec::new());
+        assert!(!screen(&app, &quiet).contains("any key closes"));
+        app.help = true;
+        let shown = screen(&app, &quiet);
+        for (keys, what) in BINDINGS {
+            assert!(shown.contains(keys), "help is missing {keys}");
+            assert!(shown.contains(what), "help is missing: {what}");
+        }
+    }
+
+    #[test]
+    fn volume_and_mute_show_in_the_levels_box() {
+        let mut state = snapshot(Vec::new());
+        state.volume = 0.7;
+        state.muted = true;
+        let shown = screen(&app(), &state);
+        assert!(shown.contains("Volume  70%"), "{shown}");
+        assert!(shown.contains("MUTED"));
+    }
+
+    #[test]
+    fn device_events_are_remembered_for_the_d_key() {
+        let mut app = app();
+        app.remember_device(&EngineEvent::DeviceStarted {
+            direction: Device::Input,
+            description: "Headset (48000 Hz)".into(),
+        });
+        app.remember_device(&EngineEvent::DeviceLost(Device::Output));
+        assert_eq!(app.mic.as_deref(), Some("Headset (48000 Hz)"));
+        assert_eq!(app.speaker.as_deref(), Some("lost, retrying"));
     }
 
     #[test]
