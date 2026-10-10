@@ -13,11 +13,13 @@ publish = false
 
 [workspace.dependencies]
 crossbeam-channel = "0.5.17"
+gethostname = "1.1"
 serde = { version = "1", features = ["derive"] }
 takkie-core = { path = "crates/takkie-core" }
 takkie-engine = { path = "crates/takkie-engine" }
 thiserror = "2"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1"
 
 [workspace.lints.rust]
