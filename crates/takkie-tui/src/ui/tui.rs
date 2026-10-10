@@ -393,7 +393,7 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
 
     render_header(f, rows[0], app, snapshot);
     render_peers(f, left[0], snapshot, Instant::now());
-    render_ptt_status(f, left[1], app);
+    render_ptt_status(f, left[1], app, snapshot);
     render_levels(f, left[2], snapshot);
     render_events(f, columns[1], app);
     render_footer(f, rows[2], app.mode);
@@ -472,26 +472,47 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot
     f.render_widget(header, area);
 }
 
-fn render_ptt_status(f: &mut Frame, area: Rect, app: &App) {
-    let on = app.transmitting;
+/// What the channel is doing: us talking, someone else talking, or free.
+fn channel_state(transmitting: bool, snapshot: &EngineSnapshot) -> (String, Color) {
+    let talkers: Vec<String> = ordered(&snapshot.peers, snapshot.channel)
+        .into_iter()
+        .filter(|peer| peer.talking && peer.channel == snapshot.channel)
+        .map(|peer| {
+            if peer.name.is_empty() {
+                peer.id.to_string()
+            } else {
+                peer.name.clone()
+            }
+        })
+        .collect();
+    let who = match talkers.as_slice() {
+        [] => None,
+        [one] => Some(format!("{one} is talking")),
+        [first, rest @ ..] => Some(format!("{first} and {} more are talking", rest.len())),
+    };
+    match (transmitting, who) {
+        (true, None) => ("🔴 TRANSMITTING".to_owned(), Color::Red),
+        (true, Some(who)) => (format!("🔴 TRANSMITTING ({who} too)"), Color::Red),
+        (false, Some(who)) => (format!("🟡 BUSY: {who}"), Color::Yellow),
+        (false, None) => ("🟢 FREE".to_owned(), Color::Green),
+    }
+}
 
-    let ptt = Paragraph::new(if on {
-        "🔴 TRANSMITTING"
-    } else {
-        "⚫ STANDBY"
-    })
-    .style(
-        Style::default()
-            .fg(if on { Color::Red } else { Color::Gray })
-            .add_modifier(Modifier::BOLD),
-    )
-    .alignment(Alignment::Center)
-    .block(
-        Block::default()
-            .title(format!("🎤 Push-to-Talk ({})", mode_label(app.mode)))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(if on { Color::Red } else { Color::White })),
-    );
+fn render_ptt_status(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot) {
+    let (text, color) = channel_state(app.transmitting, snapshot);
+    let ptt = Paragraph::new(text)
+        .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .title(format!("🎤 Push-to-Talk ({})", mode_label(app.mode)))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(if app.transmitting {
+                    Color::Red
+                } else {
+                    Color::White
+                })),
+        );
     f.render_widget(ptt, area);
 }
 
@@ -845,6 +866,36 @@ mod tests {
         app.remember_device(&EngineEvent::DeviceLost(Device::Output));
         assert_eq!(app.mic.as_deref(), Some("Headset (48000 Hz)"));
         assert_eq!(app.speaker.as_deref(), Some("lost, retrying"));
+    }
+
+    #[test]
+    fn the_channel_is_free_busy_or_ours() {
+        let nobody = snapshot(vec![peer(1, "Bedroom", 2, false)]);
+        assert_eq!(channel_state(false, &nobody).0, "🟢 FREE");
+        assert_eq!(channel_state(true, &nobody).0, "🔴 TRANSMITTING");
+
+        let one = snapshot(vec![
+            peer(1, "Bedroom", 2, true),
+            peer(2, "Office", 5, true),
+        ]);
+        assert_eq!(
+            channel_state(false, &one),
+            ("🟡 BUSY: Bedroom is talking".to_owned(), Color::Yellow)
+        );
+        assert_eq!(
+            channel_state(true, &one).0,
+            "🔴 TRANSMITTING (Bedroom is talking too)"
+        );
+
+        let many = snapshot(vec![
+            peer(1, "Bedroom", 2, true),
+            peer(3, "Attic", 2, true),
+            peer(4, "", 2, true),
+        ]);
+        assert_eq!(
+            channel_state(false, &many).0,
+            "🟡 BUSY: Attic and 2 more are talking"
+        );
     }
 
     #[test]
