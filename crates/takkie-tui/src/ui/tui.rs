@@ -145,14 +145,15 @@ pub struct EventLog {
 
 impl EventLog {
     pub fn push(&mut self, text: impl AsRef<str>) {
+        let time = chrono::Local::now().format("%H:%M:%S").to_string();
+        self.push_at(&time, text);
+    }
+
+    fn push_at(&mut self, time: &str, text: impl AsRef<str>) {
         if self.lines.len() == MAX_EVENTS {
             self.lines.pop_front();
         }
-        self.lines.push_back(format!(
-            "[{}] {}",
-            chrono::Local::now().format("%H:%M:%S"),
-            text.as_ref()
-        ));
+        self.lines.push_back(format!("[{time}] {}", text.as_ref()));
     }
 
     pub fn lines(&self) -> std::collections::vec_deque::Iter<'_, String> {
@@ -609,15 +610,37 @@ fn render_peers(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot, now: Insta
     f.render_widget(list, area);
 }
 
+/// Splits `line` into rows at most `width` cells wide; rows after the
+/// first are indented.
+fn wrapped(line: &str, width: usize) -> Vec<String> {
+    const INDENT: &str = "  ";
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for c in line.chars() {
+        row.push(c);
+        if Span::raw(row.as_str()).width() > width && row.chars().count() > INDENT.len() + 1 {
+            row.pop();
+            rows.push(std::mem::replace(&mut row, format!("{INDENT}{c}")));
+        }
+    }
+    rows.push(row);
+    rows
+}
+
 fn render_events(f: &mut Frame, area: Rect, app: &App) {
-    let items: Vec<ListItem> = app
-        .log
-        .lines()
-        .rev()
-        .take(area.height.saturating_sub(2) as usize)
-        .rev()
-        .map(|line| ListItem::new(line.as_str()))
-        .collect();
+    let width = area.width.saturating_sub(2) as usize;
+    let height = area.height.saturating_sub(2) as usize;
+    let mut rows: Vec<String> = Vec::new();
+    for line in app.log.lines().rev() {
+        let mut chunk = wrapped(line, width);
+        chunk.append(&mut rows);
+        rows = chunk;
+        if rows.len() >= height {
+            break;
+        }
+    }
+    let skip = rows.len().saturating_sub(height);
+    let items: Vec<ListItem> = rows.into_iter().skip(skip).map(ListItem::new).collect();
     let list = List::new(items).block(
         Block::default()
             .title("📋 Events Log")
@@ -696,9 +719,78 @@ mod tests {
         terminal.draw(|f| ui(f, app, snapshot)).unwrap();
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
-            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
-            .map(|at| buffer[at].symbol())
+            .map(|y| {
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
+                format!(
+                    "{}
+",
+                    row.trim_end()
+                )
+            })
             .collect()
+    }
+
+    fn talking_peers() -> EngineSnapshot {
+        let mut state = snapshot(vec![
+            peer(1, "Bedroom", 2, true),
+            peer(2, "Office", 5, false),
+            peer(3, "", 2, false),
+        ]);
+        state.buffer_ms = 48;
+        state.speaker.peak = 0.3;
+        state
+    }
+
+    #[test]
+    fn long_log_lines_wrap_instead_of_being_cut() {
+        assert_eq!(wrapped("short", 10), ["short"]);
+        assert_eq!(wrapped("abcdefghijklmnop", 10), ["abcdefghij", "  klmnop"]);
+        let line = "❌ mic stopped device=Headset";
+        let rows = wrapped(line, 12);
+        assert!(rows.iter().all(|row| Span::raw(row.as_str()).width() <= 12));
+        let joined: String = rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| if i == 0 { row.as_str() } else { &row[2..] })
+            .collect();
+        assert_eq!(joined, line);
+    }
+
+    #[test]
+    fn screen_with_nobody_around() {
+        insta::assert_snapshot!(screen(&app(), &snapshot(Vec::new())));
+    }
+
+    #[test]
+    fn screen_with_peers_and_one_talking() {
+        let mut app = app();
+        app.mode = PttMode::Hold;
+        app.log.push_at("12:00:01", "✅ Bedroom joined (ch 2)");
+        app.log.push_at("12:00:05", "🗣️ Bedroom is talking");
+        insta::assert_snapshot!(screen(&app, &talking_peers()));
+    }
+
+    #[test]
+    fn screen_while_transmitting_with_an_error_in_the_log() {
+        let mut app = app();
+        app.mode = PttMode::Hold;
+        app.transmitting = true;
+        app.log.push_at("12:00:07", "⚠️ output lost, retrying");
+        app.log.push_at("12:00:08", "❌ mic stopped device=Headset");
+        let mut state = talking_peers();
+        state.mic.peak = 0.5;
+        state.volume = 0.7;
+        state.muted = true;
+        insta::assert_snapshot!(screen(&app, &state));
+    }
+
+    #[test]
+    fn screen_with_the_help_popup() {
+        let mut app = app();
+        app.help = true;
+        insta::assert_snapshot!(screen(&app, &talking_peers()));
     }
 
     fn app() -> App {
