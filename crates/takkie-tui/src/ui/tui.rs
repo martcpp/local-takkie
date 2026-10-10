@@ -1,358 +1,646 @@
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+use std::collections::VecDeque;
+use std::io;
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::Receiver;
+use ratatui::crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
+use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::{
-    Frame, Terminal,
-    backend::{Backend, CrosstermBackend},
+    DefaultTerminal, Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, LineGauge, List, ListItem, Paragraph},
 };
-use std::{
-    io,
-    net::SocketAddr,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
+use takkie_core::{ChannelId, PeerId};
+use takkie_engine::{Direction as Device, Engine, EngineEvent, EngineSnapshot, PeerInfo};
 
-pub struct AppState {
-    pub instance_name: String,
-    pub local_ip: String,
-    pub port: u16,
-    pub peers: Arc<Mutex<Vec<SocketAddr>>>,
-    pub buffer_size: Arc<Mutex<usize>>,
-    pub ptt_active: Arc<AtomicBool>,
-    pub events: Arc<Mutex<Vec<String>>>,
-    pub running: Arc<AtomicBool>,
+use crate::settings::PttMode as PttChoice;
+
+const MAX_EVENTS: usize = 100;
+// Longer than the OS key-repeat delay, or a held key flickers off before
+// the first repeat arrives.
+const RELEASE_GUESS: Duration = Duration::from_millis(700);
+
+/// Whether this terminal tells us when a key is let go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyReleases {
+    /// The Windows console always does.
+    Native,
+    /// Through the kitty keyboard protocol, switched on while we run.
+    Enhanced,
+    /// Neither; a held key only shows up as repeats.
+    Missing,
 }
 
-impl AppState {
-    pub fn new(
-        instance_name: String,
-        local_ip: String,
-        port: u16,
-        peers: Arc<Mutex<Vec<SocketAddr>>>,
-        buffer_size: Arc<Mutex<usize>>,
-    ) -> Self {
+impl KeyReleases {
+    fn detect(windows: bool, enhancement: io::Result<bool>) -> Self {
+        if windows {
+            Self::Native
+        } else if enhancement.unwrap_or(false) {
+            Self::Enhanced
+        } else {
+            Self::Missing
+        }
+    }
+
+    pub fn reported(self) -> bool {
+        self != Self::Missing
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Native => "⌨️ Key releases: reported by Windows",
+            Self::Enhanced => "⌨️ Key releases: reported (kitty keyboard protocol)",
+            Self::Missing => "⌨️ Key releases: not reported by this terminal",
+        }
+    }
+}
+
+/// Every key the app answers to, as the help popup lists them.
+const BINDINGS: [(&str, &str); 8] = [
+    ("SPACE", "talk (hold or toggle, see the footer)"),
+    ("T", "switch between hold and toggle"),
+    ("M", "mute or unmute what you hear"),
+    ("+ / -", "volume up or down"),
+    ("D", "show the microphone and speaker in use"),
+    ("1-9, 0", "channel 1 to 10 (not yet: use --channel)"),
+    ("?", "this help"),
+    ("Q / Esc", "quit"),
+];
+
+#[derive(Debug, PartialEq, Eq)]
+enum Key {
+    Quit,
+    Space(PttInput),
+    SwitchMode,
+    Help,
+    Mute,
+    Volume(i8),
+    Devices,
+    Channel,
+}
+
+fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
+    match (code, kind) {
+        (KeyCode::Char(' '), KeyEventKind::Press) => Some(Key::Space(PttInput::Press)),
+        (KeyCode::Char(' '), KeyEventKind::Repeat) => Some(Key::Space(PttInput::Repeat)),
+        (KeyCode::Char(' '), KeyEventKind::Release) => Some(Key::Space(PttInput::Release)),
+        (_, KeyEventKind::Release) => None,
+        (KeyCode::Char('q' | 'Q') | KeyCode::Esc, _) => Some(Key::Quit),
+        (KeyCode::Char('t' | 'T'), _) => Some(Key::SwitchMode),
+        (KeyCode::Char('?'), _) => Some(Key::Help),
+        (KeyCode::Char('m' | 'M'), _) => Some(Key::Mute),
+        (KeyCode::Char('+' | '='), _) => Some(Key::Volume(1)),
+        (KeyCode::Char('-' | '_'), _) => Some(Key::Volume(-1)),
+        (KeyCode::Char('d' | 'D'), _) => Some(Key::Devices),
+        (KeyCode::Char('0'..='9'), _) => Some(Key::Channel),
+        _ => None,
+    }
+}
+
+/// One 10% step up or down, kept between 0% and 200%.
+fn stepped(volume: f32, steps: i8) -> f32 {
+    let tenths = (volume * 10.0).round() + f32::from(steps);
+    tenths.clamp(0.0, 20.0) / 10.0
+}
+
+/// Hold where the terminal reports releases, toggle where it doesn't,
+/// unless the user asked for one.
+fn ptt_mode(choice: PttChoice, releases: KeyReleases) -> PttMode {
+    match (choice, releases.reported()) {
+        (PttChoice::Toggle, _) | (PttChoice::Auto, false) => PttMode::Toggle,
+        (PttChoice::Auto | PttChoice::Hold, true) => PttMode::Hold,
+        (PttChoice::Hold, false) => PttMode::HoldWithTimeout {
+            timeout: RELEASE_GUESS,
+        },
+    }
+}
+
+fn other_mode(mode: PttMode, releases: KeyReleases) -> PttMode {
+    match mode {
+        PttMode::Toggle => ptt_mode(PttChoice::Hold, releases),
+        PttMode::Hold | PttMode::HoldWithTimeout { .. } => PttMode::Toggle,
+    }
+}
+
+fn mode_label(mode: PttMode) -> &'static str {
+    match mode {
+        PttMode::Hold => "HOLD SPACE to talk",
+        PttMode::HoldWithTimeout { .. } => "HOLD SPACE to talk (release guessed)",
+        PttMode::Toggle => "SPACE starts and stops talking",
+    }
+}
+
+/// The newest event lines, oldest dropped first.
+#[derive(Debug, Default)]
+pub struct EventLog {
+    lines: VecDeque<String>,
+}
+
+impl EventLog {
+    pub fn push(&mut self, text: impl AsRef<str>) {
+        let time = chrono::Local::now().format("%H:%M:%S").to_string();
+        self.push_at(&time, text);
+    }
+
+    fn push_at(&mut self, time: &str, text: impl AsRef<str>) {
+        if self.lines.len() == MAX_EVENTS {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(format!("[{time}] {}", text.as_ref()));
+    }
+
+    pub fn lines(&self) -> std::collections::vec_deque::Iter<'_, String> {
+        self.lines.iter()
+    }
+}
+
+pub struct App {
+    name: String,
+    local_ip: String,
+    port: u16,
+    log: EventLog,
+    transmitting: bool,
+    choice: PttChoice,
+    mode: PttMode,
+    ptt: PttController,
+    help: bool,
+    mic: Option<String>,
+    speaker: Option<String>,
+}
+
+impl App {
+    pub fn new(name: String, local_ip: String, port: u16, choice: PttChoice) -> Self {
         Self {
-            instance_name,
+            name,
             local_ip,
             port,
-            peers,
-            buffer_size,
-            ptt_active: Arc::new(AtomicBool::new(false)),
-            events: Arc::new(Mutex::new(Vec::new())),
-            running: Arc::new(AtomicBool::new(true)),
+            log: EventLog::default(),
+            transmitting: false,
+            choice,
+            mode: PttMode::Toggle,
+            ptt: PttController::new(PttMode::Toggle),
+            help: false,
+            mic: None,
+            speaker: None,
         }
     }
 
-    pub fn add_event(&self, event: String) {
-        let mut events = self.events.lock().unwrap();
-        events.push(format!(
-            "[{}] {}",
-            chrono::Local::now().format("%H:%M:%S"),
-            event
-        ));
-        if events.len() > 100 {
-            events.remove(0);
+    fn remember_device(&mut self, event: &EngineEvent) {
+        let (direction, state) = match event {
+            EngineEvent::DeviceStarted {
+                direction,
+                description,
+            } => (*direction, description.clone()),
+            EngineEvent::DeviceLost(direction) => (*direction, "lost, retrying".to_owned()),
+            _ => return,
+        };
+        match direction {
+            Device::Input => self.mic = Some(state),
+            Device::Output => self.speaker = Some(state),
         }
     }
-}
 
-pub fn run_tui(state: Arc<AppState>) -> Result<(), io::Error> {
-    // Setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    state.add_event("TUI started".to_string());
-
-    let res = run_app(&mut terminal, state);
-
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-
-    if let Err(err) = res {
-        eprintln!("Error: {:?}", err);
+    pub fn note(&mut self, text: impl AsRef<str>) {
+        self.log.push(text);
     }
-
-    Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, state: Arc<AppState>) -> io::Result<()> {
+/// Takes over the terminal until the user quits. The terminal is put back
+/// even if something panics.
+pub fn run(
+    mut app: App,
+    engine: &Engine,
+    events: &Receiver<EngineEvent>,
+    panel: &Receiver<String>,
+) -> io::Result<()> {
+    let mut terminal = ratatui::try_init()?;
+    let windows = cfg!(windows);
+    let releases = KeyReleases::detect(
+        windows,
+        if windows {
+            Ok(false)
+        } else {
+            supports_keyboard_enhancement()
+        },
+    );
+    if releases == KeyReleases::Enhanced {
+        execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+        )?;
+    }
+    tracing::info!(?releases, "key releases");
+    app.note(releases.describe());
+    app.mode = ptt_mode(app.choice, releases);
+    app.ptt = PttController::new(app.mode);
+    app.note(format!("🎤 PTT: {}", mode_label(app.mode)));
+    let result = run_app(&mut terminal, &mut app, engine, events, panel, releases);
+    if releases == KeyReleases::Enhanced {
+        let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
+    ratatui::restore();
+    result
+}
+
+fn run_app(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    engine: &Engine,
+    events: &Receiver<EngineEvent>,
+    panel: &Receiver<String>,
+    releases: KeyReleases,
+) -> io::Result<()> {
     let tick_rate = Duration::from_millis(50);
-    let mut last_tick = Instant::now();
-
-    // Track if spacebar is currently being held down
-    let mut spacebar_held = false;
-    let mut last_spacebar_press = Instant::now();
-
     loop {
-        terminal.draw(|f| ui(f, &state))?;
+        let snapshot = engine.snapshot();
+        for event in events.try_iter() {
+            app.remember_device(&event);
+            app.log.push(describe(&event, &snapshot));
+        }
+        for line in panel.try_iter() {
+            app.log.push(line);
+        }
+        terminal.draw(|f| ui(f, app, &snapshot))?;
 
-        let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_else(|| Duration::from_secs(0));
-
-        if event::poll(timeout)?
+        if event::poll(tick_rate)?
             && let Event::Key(key) = event::read()?
         {
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
-                    state.running.store(false, Ordering::Relaxed);
-                    return Ok(());
-                }
-                KeyCode::Char(' ') => {
-                    // Only respond to Press events (Release is unreliable on Linux/macOS)
-                    if key.kind == KeyEventKind::Press {
-                        spacebar_held = true;
-                        last_spacebar_press = Instant::now();
-
-                        if !state.ptt_active.load(Ordering::Relaxed) {
-                            state.ptt_active.store(true, Ordering::Relaxed);
-                            state.add_event(
-                                "🔴 PTT ACTIVE - Transmitting (hold spacebar)".to_string(),
-                            );
-                        }
-                    } else if key.kind == KeyEventKind::Release {
-                        // This will work on Windows, but not Linux/macOS
-                        spacebar_held = false;
-                        state.ptt_active.store(false, Ordering::Relaxed);
-                        state.add_event("⚫ PTT OFF - Not transmitting".to_string());
+            match key_action(key.code, key.kind) {
+                Some(Key::Space(input)) => feed(app, engine, input),
+                _ if app.help => {
+                    if key.kind != KeyEventKind::Release {
+                        app.help = false;
                     }
                 }
-                _ => {}
+                Some(Key::Quit) => return Ok(()),
+                Some(Key::SwitchMode) => {
+                    set_talking(app, engine, false);
+                    app.mode = other_mode(app.mode, releases);
+                    app.ptt = PttController::new(app.mode);
+                    app.log.push(format!("🔁 PTT: {}", mode_label(app.mode)));
+                }
+                Some(Key::Help) => app.help = true,
+                Some(Key::Mute) => {
+                    let muted = !snapshot.muted;
+                    engine.set_muted(muted);
+                    app.log.push(if muted { "🔇 Muted" } else { "🔊 Unmuted" });
+                }
+                Some(Key::Volume(steps)) => {
+                    let volume = stepped(snapshot.volume, steps);
+                    engine.set_volume(volume);
+                    app.log.push(format!("🔉 Volume {:.0}%", volume * 100.0));
+                }
+                Some(Key::Devices) => {
+                    let shown = |device: &Option<String>| {
+                        device.clone().unwrap_or_else(|| "not running".to_owned())
+                    };
+                    app.log.push(format!("🎤 Mic: {}", shown(&app.mic)));
+                    app.log.push(format!("🔈 Speaker: {}", shown(&app.speaker)));
+                }
+                Some(Key::Channel) => app
+                    .log
+                    .push("🔢 Channel keys aren't active yet, start with --channel"),
+                None => {}
             }
         }
-
-        // Auto-deactivate PTT if no spacebar press in the last 200ms
-        // This simulates "release" detection for Linux/macOS
-        if spacebar_held && last_spacebar_press.elapsed() > Duration::from_millis(200) {
-            spacebar_held = false;
-            state.ptt_active.store(false, Ordering::Relaxed);
-            state.add_event("⚫ PTT OFF - Auto-deactivated".to_string());
-        }
-
-        if last_tick.elapsed() >= tick_rate {
-            last_tick = Instant::now();
-        }
+        feed(app, engine, PttInput::Tick);
     }
 }
 
-fn ui(f: &mut Frame, state: &AppState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Header
-            Constraint::Min(10),   // Main content
-            Constraint::Length(3), // Footer
-        ])
-        .split(f.area());
-
-    // Header
-    render_header(f, chunks[0], state);
-
-    // Main content area
-    let main_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(chunks[1]);
-
-    // Left side: Status and Peers
-    let left_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(10), // Connection status
-            Constraint::Length(8),  // PTT status
-            Constraint::Min(5),     // Peers
-        ])
-        .split(main_chunks[0]);
-
-    render_connection_status(f, left_chunks[0], state);
-    render_ptt_status(f, left_chunks[1], state);
-    render_peers(f, left_chunks[2], state);
-
-    // Right side: Events log
-    render_events(f, main_chunks[1], state);
-
-    // Footer
-    render_footer(f, chunks[2]);
+fn feed(app: &mut App, engine: &Engine, input: PttInput) {
+    match app.ptt.handle(input, Instant::now()) {
+        Some(PttChange::Started) => set_talking(app, engine, true),
+        Some(PttChange::Stopped) => set_talking(app, engine, false),
+        None => {}
+    }
 }
 
-fn render_header(f: &mut Frame, area: Rect, state: &AppState) {
-    let title = Paragraph::new(format!(
-        "🎵 local-takkie - {} ({}:{})",
-        state.instance_name, state.local_ip, state.port
-    ))
-    .style(
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )
+fn set_talking(app: &mut App, engine: &Engine, on: bool) {
+    if app.transmitting == on {
+        return;
+    }
+    app.transmitting = on;
+    engine.set_transmitting(on);
+    app.log.push(if on {
+        "🔴 PTT ACTIVE - Transmitting"
+    } else {
+        "⚫ PTT OFF"
+    });
+}
+
+fn label(snapshot: &EngineSnapshot, id: PeerId) -> String {
+    snapshot
+        .peers
+        .iter()
+        .find(|peer| peer.id == id && !peer.name.is_empty())
+        .map_or_else(|| id.to_string(), |peer| peer.name.clone())
+}
+
+/// One log line for an engine event.
+pub fn describe(event: &EngineEvent, snapshot: &EngineSnapshot) -> String {
+    match event {
+        EngineEvent::PeerJoined(peer) => format!("✅ {} joined (ch {})", peer.name, peer.channel),
+        EngineEvent::PeerUpdated(peer) => format!("✏️ {} is on ch {}", peer.name, peer.channel),
+        EngineEvent::PeerLeft(id) => format!("👋 {} left", label(snapshot, *id)),
+        EngineEvent::TalkStarted(id) => format!("🗣️ {} is talking", label(snapshot, *id)),
+        EngineEvent::TalkStopped(id) => format!("🤐 {} stopped", label(snapshot, *id)),
+        EngineEvent::DeviceStarted {
+            direction,
+            description,
+        } => format!("🎧 {direction}: {description}"),
+        EngineEvent::DeviceLost(direction) => format!("⚠️ {direction} lost, retrying"),
+        EngineEvent::Warning(warning) => format!("⚠️ {warning}"),
+        other => format!("{other:?}"),
+    }
+}
+
+fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(3),
+        ])
+        .split(f.area());
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(rows[1]);
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(5),
+            Constraint::Length(3),
+            Constraint::Length(5),
+        ])
+        .split(columns[0]);
+
+    render_header(f, rows[0], app, snapshot);
+    render_peers(f, left[0], snapshot, Instant::now());
+    render_ptt_status(f, left[1], app);
+    render_levels(f, left[2], snapshot);
+    render_events(f, columns[1], app);
+    render_footer(f, rows[2], app.mode);
+    if app.help {
+        render_help(f, f.area());
+    }
+}
+
+fn render_help(f: &mut Frame, screen: Rect) {
+    let width = 62.min(screen.width);
+    let height = (BINDINGS.len() as u16 + 2).min(screen.height);
+    let area = Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    );
+    let lines: Vec<Line> = BINDINGS
+        .iter()
+        .map(|(keys, what)| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {keys:<9}"),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(*what),
+            ])
+        })
+        .collect();
+    f.render_widget(Clear, area);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title("❓ Keys (any key closes)")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        ),
+        area,
+    );
+}
+
+fn render_header(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot) {
+    let gray = Style::default().fg(Color::Gray);
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "🎵 local-takkie   ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            app.name.clone(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("   channel ", gray),
+        Span::styled(
+            snapshot.channel.to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("   port ", gray),
+        Span::styled(app.port.to_string(), Style::default().fg(Color::Yellow)),
+        Span::styled(format!("   {}", app.local_ip), gray),
+    ]))
     .alignment(Alignment::Center)
     .block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan)),
     );
-    f.render_widget(title, area);
+    f.render_widget(header, area);
 }
 
-fn render_connection_status(f: &mut Frame, area: Rect, state: &AppState) {
-    let peers_count = state.peers.lock().unwrap().len();
-    let buffer_size = *state.buffer_size.lock().unwrap();
+fn render_ptt_status(f: &mut Frame, area: Rect, app: &App) {
+    let on = app.transmitting;
 
-    let status_text = vec![
-        Line::from(vec![
-            Span::styled("Instance: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                &state.instance_name,
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Local IP: ", Style::default().fg(Color::Gray)),
-            Span::styled(&state.local_ip, Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![
-            Span::styled("Port: ", Style::default().fg(Color::Gray)),
-            Span::styled(state.port.to_string(), Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Connected Peers: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                peers_count.to_string(),
-                Style::default().fg(if peers_count > 0 {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Buffer Size: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                format!("{} samples", buffer_size),
-                Style::default().fg(if buffer_size > 0 {
-                    Color::Green
-                } else {
-                    Color::Gray
-                }),
-            ),
-        ]),
-    ];
-
-    let paragraph = Paragraph::new(status_text)
-        .block(
-            Block::default()
-                .title("📡 Connection Status")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White)),
-        )
-        .wrap(Wrap { trim: true });
-    f.render_widget(paragraph, area);
-}
-
-fn render_ptt_status(f: &mut Frame, area: Rect, state: &AppState) {
-    let ptt_active = state.ptt_active.load(Ordering::Relaxed);
-
-    let status_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(3)])
-        .split(area);
-
-    // PTT indicator
-    let ptt_text = if ptt_active {
+    let ptt = Paragraph::new(if on {
         "🔴 TRANSMITTING"
     } else {
         "⚫ STANDBY"
-    };
-
-    let ptt_paragraph = Paragraph::new(ptt_text)
-        .style(
-            Style::default()
-                .fg(if ptt_active { Color::Red } else { Color::Gray })
-                .add_modifier(Modifier::BOLD),
-        )
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .title("🎤 Push-to-Talk (Hold SPACE)")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(if ptt_active {
-                    Color::Red
-                } else {
-                    Color::White
-                })),
-        );
-    f.render_widget(ptt_paragraph, status_chunks[0]);
-
-    // Audio level gauge (simulated)
-    let audio_level = if ptt_active { 100 } else { 0 };
-    let gauge = Gauge::default()
-        .block(
-            Block::default()
-                .title("🔊 Audio Level")
-                .borders(Borders::ALL),
-        )
-        .gauge_style(Style::default().fg(if ptt_active {
-            Color::Green
-        } else {
-            Color::Gray
-        }))
-        .percent(audio_level);
-    f.render_widget(gauge, status_chunks[1]);
+    })
+    .style(
+        Style::default()
+            .fg(if on { Color::Red } else { Color::Gray })
+            .add_modifier(Modifier::BOLD),
+    )
+    .alignment(Alignment::Center)
+    .block(
+        Block::default()
+            .title(format!("🎤 Push-to-Talk ({})", mode_label(app.mode)))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if on { Color::Red } else { Color::White })),
+    );
+    f.render_widget(ptt, area);
 }
 
-fn render_peers(f: &mut Frame, area: Rect, state: &AppState) {
-    let peers = state.peers.lock().unwrap();
-    let items: Vec<ListItem> = peers
-        .iter()
-        .enumerate()
-        .map(|(i, peer)| {
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{}. ", i + 1), Style::default().fg(Color::Gray)),
-                Span::styled(format!("📱 {}", peer), Style::default().fg(Color::Green)),
-            ]))
-        })
-        .collect();
+/// A peak level as a meter fill, on a -60 to 0 dB scale.
+fn meter(peak: f32) -> f64 {
+    if peak <= 0.001 {
+        return 0.0;
+    }
+    f64::from((20.0 * peak.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
+}
 
+fn render_levels(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot) {
+    let block = Block::default().title("🔊 Levels").borders(Borders::ALL);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let gauge = |label: &'static str, peak: f32, color: Color| {
+        LineGauge::default()
+            .label(label)
+            .ratio(meter(peak))
+            .filled_symbol("█")
+            .unfilled_symbol("░")
+            .filled_style(Style::default().fg(color))
+            .unfilled_style(Style::default().fg(Color::DarkGray))
+    };
+    f.render_widget(gauge("Mic     ", snapshot.mic.peak, Color::Green), rows[0]);
+    f.render_widget(
+        gauge("Speaker ", snapshot.speaker.peak, Color::Cyan),
+        rows[1],
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Buffer  ", Style::default().fg(Color::Gray)),
+            Span::raw(format!("{} ms", snapshot.buffer_ms)),
+            Span::styled("    Volume  ", Style::default().fg(Color::Gray)),
+            Span::raw(format!("{:.0}%", snapshot.volume * 100.0)),
+            Span::styled(
+                if snapshot.muted { "  MUTED" } else { "" },
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        rows[2],
+    );
+}
+
+/// How long ago, as a peer list shows it.
+fn ago(elapsed: Duration) -> String {
+    match elapsed.as_secs() {
+        0 => "now".to_owned(),
+        seconds @ 1..=59 => format!("{seconds} s ago"),
+        seconds => format!("{} min ago", seconds / 60),
+    }
+}
+
+/// Our channel first, then by name, nameless ones last.
+fn ordered(peers: &[PeerInfo], mine: ChannelId) -> Vec<&PeerInfo> {
+    let mut peers: Vec<&PeerInfo> = peers.iter().collect();
+    peers.sort_by_key(|peer| {
+        (
+            peer.channel != mine,
+            peer.name.is_empty(),
+            peer.name.to_lowercase(),
+            peer.id,
+        )
+    });
+    peers
+}
+
+fn peer_line(peer: &PeerInfo, mine: ChannelId, now: Instant) -> Line<'static> {
+    let here = peer.channel == mine;
+    let text = Style::default().fg(if here { Color::White } else { Color::DarkGray });
+    let (dot, dot_style) = if peer.talking {
+        (
+            "●",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        ("○", Style::default().fg(Color::DarkGray))
+    };
+    let name = if peer.name.is_empty() {
+        peer.id.to_string()
+    } else {
+        peer.name.clone()
+    };
+    Line::from(vec![
+        Span::styled(format!("{dot} "), dot_style),
+        Span::styled(format!("{name:<20}"), text),
+        Span::styled(format!(" ch {:<3}", peer.channel.get()), text),
+        Span::styled(
+            ago(now.saturating_duration_since(peer.last_seen)),
+            Style::default().fg(Color::Gray),
+        ),
+    ])
+}
+
+fn render_peers(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot, now: Instant) {
+    let here = snapshot
+        .peers
+        .iter()
+        .filter(|peer| peer.channel == snapshot.channel)
+        .count();
+    let items: Vec<ListItem> = ordered(&snapshot.peers, snapshot.channel)
+        .into_iter()
+        .map(|peer| ListItem::new(peer_line(peer, snapshot.channel, now)))
+        .collect();
     let list = List::new(items).block(
         Block::default()
-            .title(format!("👥 Connected Peers ({})", peers.len()))
+            .title(format!(
+                "👥 Peers ({here} on your channel, {} in all)",
+                snapshot.peers.len()
+            ))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White)),
     );
     f.render_widget(list, area);
 }
 
-fn render_events(f: &mut Frame, area: Rect, state: &AppState) {
-    let events = state.events.lock().unwrap();
-    let items: Vec<ListItem> = events
-        .iter()
-        .rev()
-        .take(area.height.saturating_sub(2) as usize)
-        .rev()
-        .map(|event| ListItem::new(event.as_str()))
-        .collect();
+/// Splits `line` into rows at most `width` cells wide; rows after the
+/// first are indented.
+fn wrapped(line: &str, width: usize) -> Vec<String> {
+    const INDENT: &str = "  ";
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for c in line.chars() {
+        row.push(c);
+        if Span::raw(row.as_str()).width() > width && row.chars().count() > INDENT.len() + 1 {
+            row.pop();
+            rows.push(std::mem::replace(&mut row, format!("{INDENT}{c}")));
+        }
+    }
+    rows.push(row);
+    rows
+}
 
+fn render_events(f: &mut Frame, area: Rect, app: &App) {
+    let width = area.width.saturating_sub(2) as usize;
+    let height = area.height.saturating_sub(2) as usize;
+    let mut rows: Vec<String> = Vec::new();
+    for line in app.log.lines().rev() {
+        let mut chunk = wrapped(line, width);
+        chunk.append(&mut rows);
+        rows = chunk;
+        if rows.len() >= height {
+            break;
+        }
+    }
+    let skip = rows.len().saturating_sub(height);
+    let items: Vec<ListItem> = rows.into_iter().skip(skip).map(ListItem::new).collect();
     let list = List::new(items).block(
         Block::default()
             .title("📋 Events Log")
@@ -362,8 +650,8 @@ fn render_events(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(list, area);
 }
 
-fn render_footer(f: &mut Frame, area: Rect) {
-    let footer_text = Paragraph::new("HOLD SPACEBAR to transmit | 'Q' or ESC to quit")
+fn render_footer(f: &mut Frame, area: Rect, mode: PttMode) {
+    let footer_text = Paragraph::new(format!("{} | ? keys | Q or ESC quit", mode_label(mode)))
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));
@@ -372,121 +660,347 @@ fn render_footer(f: &mut Frame, area: Rect) {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
+    use takkie_core::ChannelId;
+    use takkie_core::dsp::Level;
+    use takkie_engine::{EngineStats, PeerInfo};
+
     use super::*;
 
-    #[test]
-    fn test_app_state_creation() {
-        let peers = Arc::new(Mutex::new(Vec::new()));
-        let buffer_size = Arc::new(Mutex::new(0));
-
-        let state = AppState::new(
-            "test-instance".to_string(),
-            "192.168.1.100".to_string(),
-            8080,
-            peers,
-            buffer_size,
-        );
-
-        assert_eq!(state.instance_name, "test-instance");
-        assert_eq!(state.local_ip, "192.168.1.100");
-        assert_eq!(state.port, 8080);
-        assert!(!state.ptt_active.load(Ordering::Relaxed));
-        assert!(state.running.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn test_app_state_add_event() {
-        let peers = Arc::new(Mutex::new(Vec::new()));
-        let buffer_size = Arc::new(Mutex::new(0));
-
-        let state = AppState::new(
-            "test".to_string(),
-            "127.0.0.1".to_string(),
-            8080,
-            peers,
-            buffer_size,
-        );
-
-        state.add_event("Test event 1".to_string());
-        state.add_event("Test event 2".to_string());
-
-        let events = state.events.lock().unwrap();
-        assert_eq!(events.len(), 2);
-        assert!(events[0].contains("Test event 1"));
-        assert!(events[1].contains("Test event 2"));
-    }
-
-    #[test]
-    fn test_app_state_event_limit() {
-        let peers = Arc::new(Mutex::new(Vec::new()));
-        let buffer_size = Arc::new(Mutex::new(0));
-
-        let state = AppState::new(
-            "test".to_string(),
-            "127.0.0.1".to_string(),
-            8080,
-            peers,
-            buffer_size,
-        );
-
-        // Add 150 events (more than the 100 limit)
-        for i in 0..150 {
-            state.add_event(format!("Event {}", i));
+    fn kitchen() -> PeerInfo {
+        PeerInfo {
+            id: PeerId::new(7),
+            name: "Kitchen".into(),
+            channel: ChannelId::try_from(2).unwrap(),
+            addr: SocketAddr::from(([192, 168, 1, 5], 40_000)),
+            talking: false,
+            last_seen: Instant::now(),
         }
+    }
 
-        let events = state.events.lock().unwrap();
-        assert_eq!(events.len(), 100);
-        // The oldest events should be removed
-        assert!(events[0].contains("Event 50"));
+    fn peer(id: u64, name: &str, channel: u8, talking: bool) -> PeerInfo {
+        PeerInfo {
+            id: PeerId::new(id),
+            name: name.into(),
+            channel: ChannelId::try_from(channel).unwrap(),
+            talking,
+            ..kitchen()
+        }
     }
 
     #[test]
-    fn test_app_state_thread_safety() {
-        let peers = Arc::new(Mutex::new(Vec::new()));
-        let buffer_size = Arc::new(Mutex::new(0));
+    fn every_key_maps_to_its_action() {
+        use KeyEventKind::{Press, Release};
+        let press = |c| key_action(KeyCode::Char(c), Press);
+        assert_eq!(press('?'), Some(Key::Help));
+        assert_eq!(press('m'), Some(Key::Mute));
+        assert_eq!(press('+'), Some(Key::Volume(1)));
+        assert_eq!(press('='), Some(Key::Volume(1)));
+        assert_eq!(press('-'), Some(Key::Volume(-1)));
+        assert_eq!(press('D'), Some(Key::Devices));
+        assert_eq!(press('1'), Some(Key::Channel));
+        assert_eq!(press('0'), Some(Key::Channel));
+        assert_eq!(key_action(KeyCode::Char('m'), Release), None);
+    }
 
-        let state = Arc::new(AppState::new(
-            "test".to_string(),
-            "127.0.0.1".to_string(),
-            8080,
-            peers,
-            buffer_size,
-        ));
+    #[test]
+    fn volume_moves_in_ten_percent_steps_within_limits() {
+        assert!((stepped(1.0, 1) - 1.1).abs() < 1e-6);
+        assert!((stepped(1.0, -1) - 0.9).abs() < 1e-6);
+        assert_eq!(stepped(2.0, 1), 2.0);
+        assert_eq!(stepped(0.0, -1), 0.0);
+        assert!((stepped(0.30000004, 1) - 0.4).abs() < 1e-6);
+    }
 
-        let state_clone = state.clone();
-        let handle = std::thread::spawn(move || {
-            state_clone.add_event("Thread event".to_string());
-            state_clone.ptt_active.store(true, Ordering::Relaxed);
+    fn screen(app: &App, snapshot: &EngineSnapshot) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|f| ui(f, app, snapshot)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
+                format!(
+                    "{}
+",
+                    row.trim_end()
+                )
+            })
+            .collect()
+    }
+
+    fn talking_peers() -> EngineSnapshot {
+        let mut state = snapshot(vec![
+            peer(1, "Bedroom", 2, true),
+            peer(2, "Office", 5, false),
+            peer(3, "", 2, false),
+        ]);
+        state.buffer_ms = 48;
+        state.speaker.peak = 0.3;
+        state
+    }
+
+    #[test]
+    fn long_log_lines_wrap_instead_of_being_cut() {
+        assert_eq!(wrapped("short", 10), ["short"]);
+        assert_eq!(wrapped("abcdefghijklmnop", 10), ["abcdefghij", "  klmnop"]);
+        let line = "❌ mic stopped device=Headset";
+        let rows = wrapped(line, 12);
+        assert!(rows.iter().all(|row| Span::raw(row.as_str()).width() <= 12));
+        let joined: String = rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| if i == 0 { row.as_str() } else { &row[2..] })
+            .collect();
+        assert_eq!(joined, line);
+    }
+
+    #[test]
+    fn screen_with_nobody_around() {
+        insta::assert_snapshot!(screen(&app(), &snapshot(Vec::new())));
+    }
+
+    #[test]
+    fn screen_with_peers_and_one_talking() {
+        let mut app = app();
+        app.mode = PttMode::Hold;
+        app.log.push_at("12:00:01", "✅ Bedroom joined (ch 2)");
+        app.log.push_at("12:00:05", "🗣️ Bedroom is talking");
+        insta::assert_snapshot!(screen(&app, &talking_peers()));
+    }
+
+    #[test]
+    fn screen_while_transmitting_with_an_error_in_the_log() {
+        let mut app = app();
+        app.mode = PttMode::Hold;
+        app.transmitting = true;
+        app.log.push_at("12:00:07", "⚠️ output lost, retrying");
+        app.log.push_at("12:00:08", "❌ mic stopped device=Headset");
+        let mut state = talking_peers();
+        state.mic.peak = 0.5;
+        state.volume = 0.7;
+        state.muted = true;
+        insta::assert_snapshot!(screen(&app, &state));
+    }
+
+    #[test]
+    fn screen_with_the_help_popup() {
+        let mut app = app();
+        app.help = true;
+        insta::assert_snapshot!(screen(&app, &talking_peers()));
+    }
+
+    fn app() -> App {
+        App::new(
+            "Kitchen".into(),
+            "192.168.1.2".into(),
+            5000,
+            PttChoice::Auto,
+        )
+    }
+
+    #[test]
+    fn the_help_popup_lists_every_binding() {
+        let mut app = app();
+        let quiet = snapshot(Vec::new());
+        assert!(!screen(&app, &quiet).contains("any key closes"));
+        app.help = true;
+        let shown = screen(&app, &quiet);
+        for (keys, what) in BINDINGS {
+            assert!(shown.contains(keys), "help is missing {keys}");
+            assert!(shown.contains(what), "help is missing: {what}");
+        }
+    }
+
+    #[test]
+    fn volume_and_mute_show_in_the_levels_box() {
+        let mut state = snapshot(Vec::new());
+        state.volume = 0.7;
+        state.muted = true;
+        let shown = screen(&app(), &state);
+        assert!(shown.contains("Volume  70%"), "{shown}");
+        assert!(shown.contains("MUTED"));
+    }
+
+    #[test]
+    fn device_events_are_remembered_for_the_d_key() {
+        let mut app = app();
+        app.remember_device(&EngineEvent::DeviceStarted {
+            direction: Device::Input,
+            description: "Headset (48000 Hz)".into(),
         });
-
-        handle.join().unwrap();
-
-        let events = state.events.lock().unwrap();
-        assert!(!events.is_empty());
-        assert!(state.ptt_active.load(Ordering::Relaxed));
+        app.remember_device(&EngineEvent::DeviceLost(Device::Output));
+        assert_eq!(app.mic.as_deref(), Some("Headset (48000 Hz)"));
+        assert_eq!(app.speaker.as_deref(), Some("lost, retrying"));
     }
 
     #[test]
-    fn test_event_timestamp_format() {
-        let peers = Arc::new(Mutex::new(Vec::new()));
-        let buffer_size = Arc::new(Mutex::new(0));
+    fn meters_use_a_decibel_scale() {
+        assert_eq!(meter(0.0), 0.0);
+        assert_eq!(meter(0.0005), 0.0);
+        assert!((meter(1.0) - 1.0).abs() < 1e-6);
+        assert!((meter(0.1) - 2.0 / 3.0).abs() < 1e-3);
+        assert!((meter(0.01) - 1.0 / 3.0).abs() < 1e-3);
+        assert_eq!(meter(4.0), 1.0);
+    }
 
-        let state = AppState::new(
-            "test".to_string(),
-            "127.0.0.1".to_string(),
-            8080,
-            peers,
-            buffer_size,
+    #[test]
+    fn last_heard_reads_naturally() {
+        assert_eq!(ago(Duration::from_millis(400)), "now");
+        assert_eq!(ago(Duration::from_secs(7)), "7 s ago");
+        assert_eq!(ago(Duration::from_secs(59)), "59 s ago");
+        assert_eq!(ago(Duration::from_secs(150)), "2 min ago");
+    }
+
+    #[test]
+    fn our_channel_comes_first_then_names() {
+        let mine = ChannelId::try_from(2).unwrap();
+        let peers = [
+            peer(1, "zed", 2, false),
+            peer(2, "Amy", 5, false),
+            peer(4, "", 2, false),
+            peer(3, "bob", 2, false),
+        ];
+        let names: Vec<&str> = ordered(&peers, mine)
+            .iter()
+            .map(|peer| peer.name.as_str())
+            .collect();
+        assert_eq!(names, ["bob", "zed", "", "Amy"]);
+    }
+
+    #[test]
+    fn a_peer_line_shows_talking_name_channel_and_last_heard() {
+        let mine = ChannelId::try_from(2).unwrap();
+        let now = Instant::now();
+        let mut talking = peer(1, "Kitchen", 2, true);
+        talking.last_seen = now - Duration::from_secs(3);
+        let line = peer_line(&talking, mine, now).to_string();
+        assert!(line.starts_with("● Kitchen"), "{line}");
+        assert!(line.contains("ch 2"), "{line}");
+        assert!(line.ends_with("3 s ago"), "{line}");
+        let quiet = peer_line(&peer(9, "", 5, false), mine, now).to_string();
+        assert!(
+            quiet.starts_with(&format!("○ {}", PeerId::new(9))),
+            "{quiet}"
         );
+    }
 
-        state.add_event("Test event".to_string());
+    fn snapshot(peers: Vec<PeerInfo>) -> EngineSnapshot {
+        EngineSnapshot {
+            id: PeerId::new(1),
+            channel: ChannelId::try_from(2).unwrap(),
+            transmitting: false,
+            muted: false,
+            volume: 1.0,
+            mic: Level::default(),
+            speaker: Level::default(),
+            buffer_ms: 0,
+            peers,
+            stats: EngineStats::default(),
+        }
+    }
 
-        let events = state.events.lock().unwrap();
-        let event = &events[0];
+    #[test]
+    fn windows_always_reports_releases_and_others_need_the_protocol() {
+        assert_eq!(KeyReleases::detect(true, Ok(false)), KeyReleases::Native);
+        assert_eq!(KeyReleases::detect(false, Ok(true)), KeyReleases::Enhanced);
+        assert_eq!(KeyReleases::detect(false, Ok(false)), KeyReleases::Missing);
+        let no_answer = Err(io::Error::other("no reply"));
+        assert_eq!(KeyReleases::detect(false, no_answer), KeyReleases::Missing);
+        assert!(KeyReleases::Native.reported());
+        assert!(!KeyReleases::Missing.reported());
+    }
 
-        // Event should contain timestamp in [HH:MM:SS] format
-        assert!(event.contains("["));
-        assert!(event.contains("]"));
-        assert!(event.contains("Test event"));
+    #[test]
+    fn only_space_cares_about_releases() {
+        use KeyEventKind::{Press, Release, Repeat};
+        let space = |kind| key_action(KeyCode::Char(' '), kind);
+        assert_eq!(space(Press), Some(Key::Space(PttInput::Press)));
+        assert_eq!(space(Repeat), Some(Key::Space(PttInput::Repeat)));
+        assert_eq!(space(Release), Some(Key::Space(PttInput::Release)));
+        assert_eq!(key_action(KeyCode::Char('q'), Press), Some(Key::Quit));
+        assert_eq!(key_action(KeyCode::Esc, Press), Some(Key::Quit));
+        assert_eq!(key_action(KeyCode::Char('T'), Press), Some(Key::SwitchMode));
+        assert_eq!(key_action(KeyCode::Char('q'), Release), None);
+        assert_eq!(key_action(KeyCode::Char('t'), Release), None);
+        assert_eq!(key_action(KeyCode::Char('x'), Press), None);
+    }
+
+    #[test]
+    fn auto_holds_where_releases_arrive_and_toggles_elsewhere() {
+        use KeyReleases::{Enhanced, Missing, Native};
+        let guess = PttMode::HoldWithTimeout {
+            timeout: RELEASE_GUESS,
+        };
+        assert_eq!(ptt_mode(PttChoice::Auto, Native), PttMode::Hold);
+        assert_eq!(ptt_mode(PttChoice::Auto, Enhanced), PttMode::Hold);
+        assert_eq!(ptt_mode(PttChoice::Auto, Missing), PttMode::Toggle);
+        assert_eq!(ptt_mode(PttChoice::Toggle, Native), PttMode::Toggle);
+        assert_eq!(ptt_mode(PttChoice::Hold, Native), PttMode::Hold);
+        assert_eq!(ptt_mode(PttChoice::Hold, Missing), guess);
+    }
+
+    #[test]
+    fn t_swaps_between_hold_and_toggle() {
+        use KeyReleases::{Missing, Native};
+        assert_eq!(other_mode(PttMode::Hold, Native), PttMode::Toggle);
+        assert_eq!(other_mode(PttMode::Toggle, Native), PttMode::Hold);
+        assert_eq!(
+            other_mode(PttMode::Toggle, Missing),
+            PttMode::HoldWithTimeout {
+                timeout: RELEASE_GUESS
+            }
+        );
+        assert_eq!(
+            other_mode(
+                PttMode::HoldWithTimeout {
+                    timeout: RELEASE_GUESS
+                },
+                Missing
+            ),
+            PttMode::Toggle
+        );
+    }
+
+    #[test]
+    fn the_log_keeps_the_newest_lines_with_a_time() {
+        let mut log = EventLog::default();
+        for i in 0..150 {
+            log.push(format!("event {i}"));
+        }
+        let lines: Vec<&String> = log.lines().collect();
+        assert_eq!(lines.len(), MAX_EVENTS);
+        assert!(lines[0].ends_with("] event 50"));
+        assert!(lines[0].starts_with('['));
+    }
+
+    #[test]
+    fn events_read_with_peer_names() {
+        let known = snapshot(vec![kitchen()]);
+        let id = kitchen().id;
+        assert_eq!(
+            describe(&EngineEvent::PeerJoined(kitchen()), &known),
+            "✅ Kitchen joined (ch 2)"
+        );
+        assert_eq!(
+            describe(&EngineEvent::TalkStarted(id), &known),
+            "🗣️ Kitchen is talking"
+        );
+        assert_eq!(
+            describe(&EngineEvent::PeerLeft(id), &known),
+            "👋 Kitchen left"
+        );
+    }
+
+    #[test]
+    fn unknown_peers_show_their_id() {
+        let id = PeerId::new(0xab);
+        assert_eq!(
+            describe(&EngineEvent::PeerLeft(id), &snapshot(Vec::new())),
+            format!("👋 {id} left")
+        );
     }
 }

@@ -338,8 +338,9 @@ second.
 - **One `mdns-sd` daemon per app**, with its handle kept for the whole run.
   - Service type `_takkie._udp.local.`
   - TXT record: `v=1`, `id=<sender_id>`, `ch=<channel>`, `name=<display name>`
-  - `enable_addr_auto()`, so all real network interfaces are announced and
-    kept up to date.
+  - `enable_addr_auto()`, so the addresses stay up to date, but announce only
+    LAN interfaces: on a phone the automatic list also has loopback, mobile
+    data and virtual interfaces that peers can't reach (E4.4).
 - **Events:** handle `ServiceResolved` and `ServiceRemoved`. When choosing a
   peer's address, prefer usable IPv4 addresses. Recognise yourself by `id`,
   not by IP address.
@@ -395,11 +396,11 @@ change it.
 
 | # | Decision | Why | Alternatives considered | Reconsider if |
 |---|---|---|---|---|
-| D1 | **Tauri 2** for desktop GUI and Android | One UI codebase for desktop + mobile. The Rust engine runs in-process. A Kotlin plugin system covers Android-only needs. It was already planned (`tauri-plugin-os` was in Cargo.toml). | Slint, Dioxus, egui, native Kotlin + UniFFI | The Android spike (E4) shows background audio or audio latency can't be made to work in Tauri. Then: native Kotlin UI + UniFFI bindings to `takkie-engine`. |
+| D1 | **Tauri 2** for desktop GUI and Android | One UI codebase for desktop + mobile. The Rust engine runs in-process. A Kotlin plugin system covers Android-only needs. It was already planned (`tauri-plugin-os` was in Cargo.toml). | Slint, Dioxus, egui, native Kotlin + UniFFI | Another phone shows background audio or latency that can't be fixed in Tauri (the spike passed: [ADR 0011](docs/adr/0011-android-feasibility.md)). Then: native Kotlin UI + UniFFI bindings to `takkie-engine`. |
 | D2 | **Threads + channels**, no tokio in the engine | Real-time audio isn't async. Low packet rate. Simpler to reason about and test. | tokio everywhere | We add internet relays or many sockets |
-| D3 | **Opus** via the `opus` crate (libopus) | Industry standard for voice, built-in loss concealment and FEC | Raw PCM (needs 30–60x more bandwidth), other codecs | Cross-compiling libopus for Android fails (E4). Then: prebuilt libopus or a different binding. |
-| D4 | **cpal** for audio I/O | One API for WASAPI, CoreAudio, ALSA/PulseAudio/PipeWire and AAudio | Platform-specific code | Android audio quality issues → Oboe |
-| D5 | **mdns-sd** for discovery | Pure Rust, works on all 3 desktop OSes and Android (with MulticastLock) | libmdns, Bonjour/NSD via platform plugins | iOS: Apple requires a special multicast entitlement, so we may need NWBrowser via Swift |
+| D3 | **Opus** via the `opus` crate 0.4 (libopus 1.6.1 built by `opusic-sys`) | Industry standard for voice, built-in loss concealment and FEC | Raw PCM (needs 30–60x more bandwidth), other codecs | A binding without CMake becomes solid (`opus-rs` wasn't, in E4.3) |
+| D4 | **cpal** for audio I/O | One API for WASAPI, CoreAudio, ALSA/PulseAudio/PipeWire and AAudio | Platform-specific code | Android audio quality issues → Oboe. On Android we also need AAudio's low-latency mode, which cpal doesn't request yet (E4.2). |
+| D5 | **mdns-sd** for discovery | Pure Rust, works on all 3 desktop OSes and Android (with MulticastLock, held by a foreground service; E4.4, E4.5) | libmdns, Bonjour/NSD via platform plugins | iOS: Apple requires a special multicast entitlement, so we may need NWBrowser via Swift |
 | D6 | **ChaCha20-Poly1305 + Argon2id** (RustCrypto) | Fast on phones without AES hardware, misuse-resistant, pure Rust | AES-GCM, PAKE-based key exchange | We need per-user keys or forward secrecy |
 | D7 | **rtrb** ring buffers between audio callbacks and threads | Wait-free SPSC, no allocation | `ringbuf`, mutex + VecDeque (current) | — |
 | D8 | **Custom binary header** instead of bincode/serde | 24 fixed bytes, zero-copy, easy to version and fuzz, language-neutral (Kotlin/Swift could implement it) | bincode, protobuf | The protocol grows complex |
@@ -442,9 +443,10 @@ possible.
   fails the build. Tests may use unwrap/expect (`allow-unwrap-in-tests` and
   `allow-expect-in-tests` in `clippy.toml`, not `#[allow]`).
 
-  `unwrap_used` and `expect_used` are staged: `takkie-core` denies them from
-  the start, and they join `[workspace.lints]` in E8.2, once the prototype
-  code that still uses them is replaced. No `#[allow]` is used to get there.
+  `unwrap_used` and `expect_used` were staged: `takkie-core` denied them from
+  the start, and they joined `[workspace.lints]` in E8.2, once the prototype
+  code was replaced (#220). Integration-test helpers return `Result` instead,
+  since the test allowance only covers `#[test]` functions.
 - **Formatting:** `rustfmt.toml` checked in, and CI runs
   `cargo fmt --all --check`.
 - **Release profile:** `lto = "thin"`, `codegen-units = 1`, `strip = true`.
@@ -543,13 +545,13 @@ hotfix/0.2.1-crash      ─────────────────PR─
 |---|---|---|
 | `check` | Ubuntu, Windows, macOS | `fmt --check` · `clippy -D warnings` · `nextest` · build `takkie` |
 | `deny` | Ubuntu | `cargo deny check` |
+| `coverage` | Ubuntu | `cargo llvm-cov` for `takkie-core`; warns below 90% (E5.8) |
 | `gui` | Ubuntu, Windows, macOS | Build the Tauri app (only when `apps/` changes; from M3) |
 | `android` | Ubuntu | Build the APK (from M4) |
 | `fuzz` | Ubuntu, nightly schedule | 10 minutes per fuzz target |
 
 The Linux runner installs `libasound2-dev` (plus WebKitGTK for the `gui` job
-only). `CMAKE_POLICY_VERSION_MINIMUM=3.5` comes from the committed
-`.cargo/config.toml` (E1.8), so CI and developers get it automatically.
+only). libopus comes from `opusic-sys` (E4.3), which builds it with CMake.
 
 ### 6.3 Release (`.github/workflows/release.yml`, on tag `v*` on `main`)
 
@@ -696,6 +698,7 @@ minutes with no crash.
 | E6.7 | Device unplugged: emit an event and reopen the default device. |
 | E6.8 | `AudioSource`/`AudioSink` traits with fake implementations for tests. |
 | E6.9 | Manual check on real devices (30-minute call, 44.1 kHz mic, Bluetooth headset, two talkers). |
+| E6.10 | Android: ask AAudio for low-latency mode through cpal (an upstream option, or a patched cpal until it lands). Needed for M4, not M1 (E4.2). |
 
 **Done when:**
 - A 30-minute call between two machines has no growing delay.
@@ -984,10 +987,12 @@ rather than cutting tests or quality.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Android kills or pauses audio in the background | High | High | Microphone foreground service (E4.5, E15.2); proven in the spike |
-| libopus doesn't cross-compile for Android | Medium | High | Spike E4.3; fallbacks: prebuilt libopus per ABI, another binding |
+| Android kills or pauses audio in the background | **Confirmed** | High | Without a service the mic is muted after ~6 s and playback stops after ~70 s. A microphone foreground service fixes both, tested for 10 minutes (E4.5); built in E15.2. |
+| libopus doesn't cross-compile for Android | **Resolved** | High | `opus` 0.4 (`opusic-sys`) cross-compiles with the NDK and runs on a phone (E4.3). Needs `ANDROID_NDK_HOME` and Ninja. |
 | Networks that block multicast (guest Wi-Fi, "AP isolation") | Medium | Medium | Manual peers (E7.5); clear troubleshooting docs |
-| libopus build problems on Windows (CMake 4 rejects it; debug build fails to link) | **Confirmed** | Medium | Both fixed with config (E1.8, verified). Revisit the Opus binding in E4.3, ideally one that doesn't need CMake. |
+| Phone vendors add audio effects that block Android's low-latency path (Xiaomi's MiSound did, E4.2) | High | Low | Latency still about 100 ms round trip, fine for push-to-talk. Ask for low latency anyway (E6) so other phones benefit. |
+| Only one Android test phone (a Xiaomi) | Certain | Medium | Try at least one non-Xiaomi phone before M4, especially low-latency and voice mode ([ADR 0011](docs/adr/0011-android-feasibility.md)) |
+| libopus build problems on Windows (CMake 4 rejects it; debug build fails to link) | **Resolved** | Medium | Fixed with config in E1.8, then gone with `opus` 0.4 in E4.3, so the config was removed. No usable binding avoids CMake yet: `opus-rs` (pure Rust) panics with FEC on. |
 | Terminals that don't report key release | Certain (most terminals) | Low | Toggle mode fallback (E9.3); GUI apps don't have this problem |
 | Variety of Linux audio stacks (ALSA/PulseAudio/PipeWire) | Medium | Medium | Device negotiation + resampling (E6.2–E6.3); test matrix |
 | Echo when using speakers | Medium | Medium | Half-duplex by default (D9) |

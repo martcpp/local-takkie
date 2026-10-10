@@ -1,11 +1,7 @@
 [advisories]
 yanked = "deny"
 # Each exception names the ticket that removes it. Anything else fails.
-ignore = [
-    { id = "RUSTSEC-2026-0150", reason = "audiopus_sys (via opus 0.3) is unmaintained; #54 picks the Opus binding" },
-    { id = "RUSTSEC-2024-0436", reason = "paste (via ratatui 0.28) is unmaintained; #111 upgrades ratatui" },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 (via local-ip-address) is unmaintained; #97 replaces local-ip-address" },
-]
+ignore = []
 
 [licenses]
 allow = [
@@ -14,13 +10,15 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
-    "ISC",
     "MIT",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
 ]
 confidence-threshold = 0.9
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
 
 [bans]
 multiple-versions = "warn"

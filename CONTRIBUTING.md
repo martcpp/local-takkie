@@ -42,6 +42,33 @@ cargo xtask ci
 It runs what CI runs: formatting, clippy with `-D warnings`, the tests and
 cargo-deny. It has to pass.
 
+CI also measures test coverage of `takkie-core` (the goal is 90% of lines).
+To see it locally:
+
+```bash
+rustup component add llvm-tools-preview
+cargo install --locked cargo-llvm-cov
+cargo llvm-cov -p takkie-core --summary-only
+```
+
+## Checking discovery on a real network
+
+The tests never touch real mDNS, because CI runners may block multicast.
+Two engines talking over 127.0.0.1 with static peers is covered by
+`crates/takkie-engine/tests/two_nodes.rs`, which runs on all three OSes in
+CI. To check mDNS itself, run the `discovery` example in two terminals, or
+on two machines on the same network:
+
+```bash
+cargo run -p takkie-engine --example discovery -- Kitchen 2 30
+cargo run -p takkie-engine --example discovery -- Bedroom 2 30
+```
+
+Each one should print `joined` for the other within a few seconds, and
+`left` within about a second of the other one exiting. If nothing shows up,
+check that the firewall allows UDP port 5353 and that both are on the same
+subnet.
+
 ## Code rules
 
 The short version of [ROADMAP.md section 5](ROADMAP.md#5-rust-engineering-standards):

@@ -2,10 +2,13 @@
 
 /// Microphone capture and speaker playback, with Opus.
 pub mod audio;
-/// UDP transport and mDNS discovery.
-pub mod network;
+/// The engine API.
+pub mod engine;
+/// Transport, discovery and peers.
+pub mod net;
+mod threads;
 
-pub use audio::rad::start_audio_output;
-pub use audio::sad::start_mic_capture;
-pub use network::mdns::Data;
-pub use network::udp::{AudioBuffer, audio_udp_recv, udp_send_audio};
+pub use audio::devices::{DeviceInfo, DeviceList, Direction};
+pub use engine::{
+    Engine, EngineConfig, EngineError, EngineEvent, EngineSnapshot, EngineStats, PeerInfo,
+};

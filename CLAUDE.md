@@ -32,20 +32,18 @@ Cargo workspace (virtual root):
 
 - `crates/takkie-core`: pure logic, no I/O (empty for now)
 - `crates/takkie-engine`: audio, codec, network and discovery
-- `crates/takkie-tui`: the `takkie` binary (`takkie [name] [port]`)
+- `crates/takkie-tui`: the `takkie` binary (`takkie --help` for its flags)
 - `xtask`: dev commands (`cargo xtask ci`, `fmt`, `release`)
 
 ```bash
 cargo xtask ci        # fmt check, clippy -D warnings, tests, cargo-deny: run before every PR
 cargo xtask fmt       # format everything
 cargo xtask release 0.2.0   # set the version and regenerate CHANGELOG.md
-cargo run -p takkie-tui -- [name] [port]
+cargo run -p takkie-tui -- --name alice --channel 2
 ```
 
-libopus is built from C source, so CMake must be installed. The CMake 4 policy
-setting (`.cargo/config.toml`) and the Windows debug-runtime fix
-(`[profile.dev.package.audiopus_sys]` in `Cargo.toml`) are already in the repo.
-If CMake picks a Visual Studio version that isn't fully installed, set
+libopus is built from C source (`opus` 0.4 via `opusic-sys`), so CMake must be
+installed. If CMake picks a Visual Studio version that isn't fully installed, set
 `CMAKE_GENERATOR` (for example `Visual Studio 17 2022`).
 
 ## Code standards (summary of ROADMAP.md §5)

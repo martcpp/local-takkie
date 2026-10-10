@@ -1,4 +1,12 @@
-//! Pure logic for local-takkie: wire protocol, jitter buffer, DSP and the PTT
-//! state machine. No I/O, so everything here is easy to test.
+//! Pure logic for local-takkie, with no I/O.
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+pub mod dsp;
+mod ids;
+pub mod jitter;
+mod passphrase;
+pub mod peers;
+pub mod protocol;
+pub mod ptt;
+
+pub use ids::{ChannelId, InvalidChannel, PeerId, Seq};
+pub use passphrase::{EmptyPassphrase, Passphrase};
