@@ -68,6 +68,9 @@ jobs:
       - name: Check frontend types
         working-directory: apps/takkie-app/ui
         run: npm run check
+      - name: Test frontend
+        working-directory: apps/takkie-app/ui
+        run: npm test
       - name: Build frontend
         working-directory: apps/takkie-app/ui
         run: npm run build
