@@ -49,6 +49,7 @@
 
   .channel {
     position: relative;
+    min-width: 0;
     min-height: 2.75rem;
     font-size: 1.125rem;
     font-weight: 600;

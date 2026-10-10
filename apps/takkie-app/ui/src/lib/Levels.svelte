@@ -62,6 +62,7 @@
 
   .volume input {
     width: 100%;
+    min-height: 2rem;
     accent-color: var(--accent);
   }
 

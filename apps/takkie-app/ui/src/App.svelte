@@ -10,7 +10,7 @@
   import PermissionGate from './lib/PermissionGate.svelte'
   import PttButton from './lib/PttButton.svelte'
   import { channelState, micGate } from './lib/state'
-  import { app, connect, recheck } from './lib/store.svelte'
+  import { app, connect, recheck, turnOn } from './lib/store.svelte'
 
   const version = getVersion()
   let passphrase: PassphraseDialog | undefined = $state()
@@ -44,11 +44,11 @@
     <section class="problem" role="alert">
       <h2>The radio isn't running</h2>
       <p>{app.problem}</p>
+      <button onclick={() => turnOn()}>Turn it on</button>
     </section>
   {:else if app.snapshot}
     <ChannelPicker snapshot={app.snapshot} onLock={() => passphrase?.open()} />
     <PeerList snapshot={app.snapshot} />
-    <PttButton snapshot={app.snapshot} />
     <Levels snapshot={app.snapshot} />
     <PassphraseDialog
       bind:this={passphrase}
@@ -66,17 +66,37 @@
   <footer>
     {#await version then number}version {number}{/await}
   </footer>
+
+  {#if app.snapshot && !app.problem}
+    <div class="talk">
+      <PttButton snapshot={app.snapshot} />
+    </div>
+  {/if}
 </main>
 
 <style>
   main {
+    --gutter: 0.75rem;
     max-width: 34rem;
     min-height: 100vh;
+    min-height: 100dvh;
     margin: 0 auto;
-    padding: 0.75rem;
+    padding: max(var(--gutter), env(safe-area-inset-top))
+      max(var(--gutter), env(safe-area-inset-right)) 0
+      max(var(--gutter), env(safe-area-inset-left));
     display: flex;
     flex-direction: column;
     gap: 1rem;
+  }
+
+  /* Stays at the bottom, in thumb reach, while the rest scrolls above it. */
+  .talk {
+    position: sticky;
+    bottom: 0;
+    margin: 0 calc(-1 * var(--gutter));
+    padding: 0.5rem var(--gutter) max(var(--gutter), env(safe-area-inset-bottom));
+    background: var(--bg);
+    border-top: 1px solid var(--border);
   }
 
   .top {
@@ -129,8 +149,14 @@
     margin: 0;
   }
 
+  .problem button {
+    margin-top: 0.75rem;
+    min-height: 2.75rem;
+  }
+
   footer {
     margin-top: auto;
+    padding-bottom: var(--gutter);
     text-align: center;
     color: var(--muted);
     font-size: 0.75rem;

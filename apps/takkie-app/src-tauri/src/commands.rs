@@ -69,9 +69,10 @@ impl Radio {
     }
 
     /// Stops the engine: threads joined, Bye sent, mDNS unregistered.
-    pub fn stop(&self) {
+    /// `why` is what the window shows until it is started again.
+    pub fn stop(&self, why: &str) {
         if let Ok(mut engine) = self.engine.lock() {
-            *engine = Err("the app is closing".to_owned());
+            *engine = Err(why.to_owned());
         }
     }
 
@@ -207,7 +208,7 @@ mod tests {
             Err("The engine isn't running: the port is taken".to_owned())
         );
         assert_eq!(radio.view().err(), asked.err());
-        radio.stop();
+        radio.stop("the app is closing");
         let asked = radio.with(|engine| engine.set_muted(true));
         assert_eq!(
             asked,
