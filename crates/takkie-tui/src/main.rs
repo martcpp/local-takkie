@@ -46,9 +46,8 @@ fn main() -> ExitCode {
             (Some(saved), None)
         }
         Some(settings::Loaded::Broken(why)) => {
-            tracing::warn!("settings file ignored: {why}");
-            let note = format!("⚠️ Settings file ignored ({why}), using defaults");
-            (None, Some(note))
+            tracing::warn!("settings file ignored ({why}), using defaults");
+            (None, None)
         }
         None => (
             None,
@@ -79,16 +78,24 @@ fn main() -> ExitCode {
         .map_or_else(|| "unknown".to_owned(), |net| net.ip.to_string());
 
     let mut app = ui::tui::App::new(name, local_ip, engine.port(), current.ptt_mode);
-    if let Some((dir, _)) = &logs {
-        app.note(format!("📝 Logs in {}", dir.display()));
-    }
+    let panel = match &logs {
+        Some(logs) => {
+            match (&logs.dir, &logs.problem) {
+                (Some(dir), _) => app.note(format!("📝 Logs in {}", dir.display())),
+                (None, Some(problem)) => app.note(format!("⚠️ No log files: {problem}")),
+                (None, None) => {}
+            }
+            logs.panel.clone()
+        }
+        None => crossbeam_channel::never(),
+    };
     if let Some(path) = &settings_path {
         app.note(format!("⚙️ Settings in {}", path.display()));
     }
     if let Some(note) = settings_note {
         app.note(note);
     }
-    let result = ui::tui::run(app, &engine, &events);
+    let result = ui::tui::run(app, &engine, &events, &panel);
 
     if let (Some(_), Some(path)) = (&saved, &settings_path) {
         current.channel = engine.snapshot().channel.get();

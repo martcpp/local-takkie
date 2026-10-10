@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
+    widgets::{Block, Borders, LineGauge, List, ListItem, Paragraph},
 };
 use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
 use takkie_core::{ChannelId, PeerId};
@@ -163,7 +163,12 @@ impl App {
 
 /// Takes over the terminal until the user quits. The terminal is put back
 /// even if something panics.
-pub fn run(mut app: App, engine: &Engine, events: &Receiver<EngineEvent>) -> io::Result<()> {
+pub fn run(
+    mut app: App,
+    engine: &Engine,
+    events: &Receiver<EngineEvent>,
+    panel: &Receiver<String>,
+) -> io::Result<()> {
     let mut terminal = ratatui::try_init()?;
     let windows = cfg!(windows);
     let releases = KeyReleases::detect(
@@ -185,7 +190,7 @@ pub fn run(mut app: App, engine: &Engine, events: &Receiver<EngineEvent>) -> io:
     app.mode = ptt_mode(app.choice, releases);
     app.ptt = PttController::new(app.mode);
     app.note(format!("🎤 PTT: {}", mode_label(app.mode)));
-    let result = run_app(&mut terminal, &mut app, engine, events, releases);
+    let result = run_app(&mut terminal, &mut app, engine, events, panel, releases);
     if releases == KeyReleases::Enhanced {
         let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
     }
@@ -198,6 +203,7 @@ fn run_app(
     app: &mut App,
     engine: &Engine,
     events: &Receiver<EngineEvent>,
+    panel: &Receiver<String>,
     releases: KeyReleases,
 ) -> io::Result<()> {
     let tick_rate = Duration::from_millis(50);
@@ -205,6 +211,9 @@ fn run_app(
         let snapshot = engine.snapshot();
         for event in events.try_iter() {
             app.log.push(describe(&event, &snapshot));
+        }
+        for line in panel.try_iter() {
+            app.log.push(line);
         }
         terminal.draw(|f| ui(f, app, &snapshot))?;
 
@@ -289,12 +298,17 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
         .split(rows[1]);
     let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(6)])
+        .constraints([
+            Constraint::Min(5),
+            Constraint::Length(3),
+            Constraint::Length(5),
+        ])
         .split(columns[0]);
 
     render_header(f, rows[0], app, snapshot);
     render_peers(f, left[0], snapshot, Instant::now());
-    render_ptt_status(f, left[1], app, snapshot);
+    render_ptt_status(f, left[1], app);
+    render_levels(f, left[2], snapshot);
     render_events(f, columns[1], app);
     render_footer(f, rows[2], app.mode);
 }
@@ -334,12 +348,8 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot
     f.render_widget(header, area);
 }
 
-fn render_ptt_status(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot) {
+fn render_ptt_status(f: &mut Frame, area: Rect, app: &App) {
     let on = app.transmitting;
-    let parts = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(3)])
-        .split(area);
 
     let ptt = Paragraph::new(if on {
         "🔴 TRANSMITTING"
@@ -358,18 +368,50 @@ fn render_ptt_status(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnap
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if on { Color::Red } else { Color::White })),
     );
-    f.render_widget(ptt, parts[0]);
+    f.render_widget(ptt, area);
+}
 
-    let percent = (snapshot.mic.peak.clamp(0.0, 1.0) * 100.0).round() as u16;
-    let gauge = Gauge::default()
-        .block(
-            Block::default()
-                .title(format!("🔊 Mic level · buffer {} ms", snapshot.buffer_ms))
-                .borders(Borders::ALL),
-        )
-        .gauge_style(Style::default().fg(if on { Color::Green } else { Color::Gray }))
-        .percent(percent);
-    f.render_widget(gauge, parts[1]);
+/// A peak level as a meter fill, on a -60 to 0 dB scale.
+fn meter(peak: f32) -> f64 {
+    if peak <= 0.001 {
+        return 0.0;
+    }
+    f64::from((20.0 * peak.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
+}
+
+fn render_levels(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot) {
+    let block = Block::default().title("🔊 Levels").borders(Borders::ALL);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let gauge = |label: &'static str, peak: f32, color: Color| {
+        LineGauge::default()
+            .label(label)
+            .ratio(meter(peak))
+            .filled_symbol("█")
+            .unfilled_symbol("░")
+            .filled_style(Style::default().fg(color))
+            .unfilled_style(Style::default().fg(Color::DarkGray))
+    };
+    f.render_widget(gauge("Mic     ", snapshot.mic.peak, Color::Green), rows[0]);
+    f.render_widget(
+        gauge("Speaker ", snapshot.speaker.peak, Color::Cyan),
+        rows[1],
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Buffer  ", Style::default().fg(Color::Gray)),
+            Span::raw(format!("{} ms", snapshot.buffer_ms)),
+        ])),
+        rows[2],
+    );
 }
 
 /// How long ago, as a peer list shows it.
@@ -504,6 +546,16 @@ mod tests {
             talking,
             ..kitchen()
         }
+    }
+
+    #[test]
+    fn meters_use_a_decibel_scale() {
+        assert_eq!(meter(0.0), 0.0);
+        assert_eq!(meter(0.0005), 0.0);
+        assert!((meter(1.0) - 1.0).abs() < 1e-6);
+        assert!((meter(0.1) - 2.0 / 3.0).abs() < 1e-3);
+        assert!((meter(0.01) - 1.0 / 3.0).abs() < 1e-3);
+        assert_eq!(meter(4.0), 1.0);
     }
 
     #[test]
