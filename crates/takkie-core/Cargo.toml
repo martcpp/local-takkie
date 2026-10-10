@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
 thiserror = { workspace = true }
 zeroize = "1"
 
