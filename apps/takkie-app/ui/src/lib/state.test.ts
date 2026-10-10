@@ -1,6 +1,6 @@
 import { describe as suite, expect, test } from 'vitest'
 
-import type { Peer, Snapshot } from './engine'
+import type { Access, Peer, Snapshot } from './engine'
 import {
   MAX_LOG,
   channelState,
@@ -8,7 +8,9 @@ import {
   initial,
   label,
   meter,
+  micGate,
   ordered,
+  withAccess,
   withEvent,
   withNote,
   withProblem,
@@ -47,7 +49,7 @@ const running = (peers: Peer[] = []) => withSnapshot(initial(), snapshot(peers))
 
 suite('snapshots and problems', () => {
   test('nothing is known at the start', () => {
-    expect(initial()).toEqual({ snapshot: null, problem: null, log: [] })
+    expect(initial()).toEqual({ snapshot: null, problem: null, access: null, log: [] })
   })
 
   test('a snapshot replaces the last one and clears a problem', () => {
@@ -143,6 +145,33 @@ suite('the event log', () => {
     expect(state.log).toHaveLength(MAX_LOG)
     expect(state.log[0].text).toBe('line 5')
     expect(state.log.at(-1)?.text).toBe(`line ${MAX_LOG + 4}`)
+  })
+})
+
+suite('microphone permission', () => {
+  const access = (microphone: Access['microphone']): Access => ({
+    microphone,
+    notifications: 'granted',
+  })
+
+  test('granted is ready, whatever notifications say', () => {
+    expect(micGate(access('granted'))).toBe('ready')
+    expect(micGate({ microphone: 'granted', notifications: 'denied' })).toBe('ready')
+  })
+
+  test('not asked yet, or refused once, can be asked', () => {
+    expect(micGate(access('prompt'))).toBe('ask')
+    expect(micGate(access('prompt-with-rationale'))).toBe('ask')
+  })
+
+  test('refused for good needs the settings', () => {
+    expect(micGate(access('denied'))).toBe('settings')
+  })
+
+  test('what is allowed is remembered next to everything else', () => {
+    const state = withAccess(running([peer('01', 'Kitchen')]), access('prompt'))
+    expect(state.access?.microphone).toBe('prompt')
+    expect(state.snapshot?.peers).toHaveLength(1)
   })
 })
 

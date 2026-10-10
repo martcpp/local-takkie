@@ -1,7 +1,7 @@
 // What the screens show, and how engine messages change it. Plain functions
 // with no Svelte or Tauri in them, so they can be tested by themselves.
 
-import type { EngineEvent, Peer, Snapshot } from './engine'
+import type { Access, EngineEvent, Peer, Snapshot } from './engine'
 
 export type LogLine = { at: number; text: string }
 
@@ -10,13 +10,15 @@ export type AppState = {
   snapshot: Snapshot | null
   /** Why the engine isn't running, if it isn't. */
   problem: string | null
+  /** What the user has allowed, or `null` before we have asked the system. */
+  access: Access | null
   /** Newest last. */
   log: LogLine[]
 }
 
 export const MAX_LOG = 100
 
-export const initial = (): AppState => ({ snapshot: null, problem: null, log: [] })
+export const initial = (): AppState => ({ snapshot: null, problem: null, access: null, log: [] })
 
 export function withSnapshot(state: AppState, snapshot: Snapshot): AppState {
   return { ...state, snapshot, problem: null }
@@ -24,6 +26,25 @@ export function withSnapshot(state: AppState, snapshot: Snapshot): AppState {
 
 export function withProblem(state: AppState, problem: string): AppState {
   return { ...state, snapshot: null, problem }
+}
+
+export function withAccess(state: AppState, access: Access): AppState {
+  return { ...state, access }
+}
+
+/**
+ * What to do about the microphone: nothing, show the system prompt, or send
+ * the user to the settings because the system won't prompt again.
+ */
+export function micGate(access: Access): 'ready' | 'ask' | 'settings' {
+  switch (access.microphone) {
+    case 'granted':
+      return 'ready'
+    case 'denied':
+      return 'settings'
+    default:
+      return 'ask'
+  }
 }
 
 /** A line of our own in the log, such as a command that failed. */
