@@ -1,6 +1,6 @@
-//! The receiving thread: decodes each datagram's header and routes it, our
-//! channel's audio to the mixer and every channel's Hello and Bye to the
-//! peer table.
+//! The receiving thread: checks each datagram and routes it, our channel's
+//! audio to the mixer and Hello and Bye to the peer table. On a private
+//! channel only packets that open with the channel key are trusted.
 
 use std::collections::HashMap;
 use std::io;
@@ -10,8 +10,12 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwapOption;
 use crossbeam_channel::Sender;
+use takkie_core::key::ChannelKey;
 use takkie_core::protocol::{Flags, Header, PacketKind};
+use takkie_core::replay::Replays;
+use takkie_core::seal::open_packet;
 use takkie_core::{ChannelId, PeerId};
 
 use super::peers::PeerMessage;
@@ -21,6 +25,9 @@ use crate::threads::{STOP_WITHIN, join_within};
 
 const MAX_NAME: usize = 64;
 const HEARD_EVERY: Duration = Duration::from_secs(1);
+// How long a sender who sealed a packet counts as private.
+const PRIVATE_FOR: Duration = Duration::from_secs(30);
+const PRIVATE_LIMIT: usize = 1024;
 
 /// What happened to received datagrams.
 #[derive(Debug, Default)]
@@ -29,10 +36,14 @@ pub struct RxCounters {
     pub received: AtomicU64,
     /// Not a valid takkie header.
     pub invalid: AtomicU64,
-    /// Audio for another channel.
+    /// For another channel, and not presence we can use.
     pub other_channel: AtomicU64,
     /// Our own, looped back.
     pub own: AtomicU64,
+    /// On our channel but not matching our key, or a Bye we can't trust.
+    pub mismatched: AtomicU64,
+    /// Sealed packets seen before.
+    pub replayed: AtomicU64,
 }
 
 /// Where one datagram goes.
@@ -42,25 +53,136 @@ pub enum Route {
     Invalid,
     /// Sent by us.
     Own,
-    /// Audio from someone on another channel.
+    /// Another channel's audio, or a sealed Bye from there.
     OtherChannel,
     /// Audio for the mixer.
     Audio(RxPacket),
     /// News for the peer table.
     Peer(PeerMessage),
+    /// It doesn't match our key, or is a Bye we can't trust. A Hello still
+    /// tells us the sender exists.
+    Mismatch {
+        /// Who sent it.
+        sender: PeerId,
+        /// Presence to pass on, if it was a Hello.
+        presence: Option<PeerMessage>,
+    },
+    /// A sealed packet we already accepted.
+    Replayed,
 }
 
-/// Decides where a datagram goes.
-#[must_use]
-pub fn route(datagram: &[u8], from: SocketAddr, me: PeerId, channel: ChannelId) -> Route {
-    let Ok((header, payload)) = Header::decode(datagram) else {
-        return Route::Invalid;
-    };
-    if header.sender == me {
-        return Route::Own;
+/// Decides where datagrams go, remembering what's needed to do it safely.
+#[derive(Debug)]
+pub struct Router {
+    me: PeerId,
+    replays: Replays,
+    private: HashMap<PeerId, Instant>,
+}
+
+impl Router {
+    /// A router for the engine with id `me`.
+    #[must_use]
+    pub fn new(me: PeerId) -> Self {
+        Self {
+            me,
+            replays: Replays::new(),
+            private: HashMap::new(),
+        }
     }
+
+    /// Routes one datagram that arrived at `now`, decrypting it in place
+    /// when it is sealed for our channel and `key` opens it.
+    pub fn route(
+        &mut self,
+        datagram: &mut [u8],
+        from: SocketAddr,
+        channel: ChannelId,
+        key: Option<&ChannelKey>,
+        now: Instant,
+    ) -> Route {
+        let Ok((header, _)) = Header::decode(datagram) else {
+            return Route::Invalid;
+        };
+        if header.sender == self.me {
+            return Route::Own;
+        }
+        let sender = header.sender;
+        let sealed = header.flags.contains(Flags::ENCRYPTED);
+        if sealed {
+            self.saw_sealed(sender, now);
+        }
+        let presence = PeerMessage::Heard {
+            sender,
+            channel: header.channel,
+            addr: from,
+        };
+        let hello = header.kind == PacketKind::Hello;
+
+        if header.channel != channel {
+            return match (header.kind, sealed) {
+                (PacketKind::Hello, true) => Route::Peer(presence),
+                (PacketKind::Audio, _) | (PacketKind::Bye, true) => Route::OtherChannel,
+                (PacketKind::Hello | PacketKind::Bye, false) => self.plain(datagram, from, now),
+            };
+        }
+        match (sealed, key) {
+            (false, None) => self.plain(datagram, from, now),
+            (true, Some(key)) => match open_packet(key, datagram) {
+                Ok((header, payload)) if self.replays.accept(sender, header.seq) => {
+                    if header.kind == PacketKind::Bye {
+                        self.replays.forget(sender);
+                        self.private.remove(&sender);
+                    }
+                    deliver(&header, payload, from)
+                }
+                Ok(_) => Route::Replayed,
+                Err(_) => Route::Mismatch {
+                    sender,
+                    presence: hello.then_some(presence),
+                },
+            },
+            (true, None) | (false, Some(_)) => Route::Mismatch {
+                sender,
+                presence: hello.then_some(presence),
+            },
+        }
+    }
+
+    // A packet nobody vouched for. Fine for open peers, but it must not let
+    // an outsider say Bye for someone who seals their packets.
+    fn plain(&self, datagram: &[u8], from: SocketAddr, now: Instant) -> Route {
+        let Ok((header, payload)) = Header::decode(datagram) else {
+            return Route::Invalid;
+        };
+        if header.kind == PacketKind::Bye && self.is_private(header.sender, now) {
+            return Route::Mismatch {
+                sender: header.sender,
+                presence: None,
+            };
+        }
+        deliver(&header, payload, from)
+    }
+
+    fn is_private(&self, sender: PeerId, now: Instant) -> bool {
+        self.private
+            .get(&sender)
+            .is_some_and(|at| now.saturating_duration_since(*at) < PRIVATE_FOR)
+    }
+
+    fn saw_sealed(&mut self, sender: PeerId, now: Instant) {
+        // Ids in sealed packets we can't open are unverified, so the map is capped.
+        if self.private.len() >= PRIVATE_LIMIT {
+            self.private
+                .retain(|_, at| now.saturating_duration_since(*at) < PRIVATE_FOR);
+        }
+        if self.private.len() < PRIVATE_LIMIT {
+            self.private.insert(sender, now);
+        }
+    }
+}
+
+fn deliver(header: &Header, payload: &[u8], from: SocketAddr) -> Route {
     match header.kind {
-        PacketKind::Audio if header.channel != channel => Route::OtherChannel,
         PacketKind::Audio => Route::Audio(RxPacket {
             sender: header.sender,
             seq: header.seq,
@@ -103,8 +225,8 @@ pub struct RxThread {
 }
 
 impl RxThread {
-    /// Starts receiving on `transport` as `me`, keeping packets for the
-    /// channel currently in `channel`.
+    /// Starts receiving on `transport` as `me` on an open channel, keeping
+    /// packets for the channel currently in `channel`.
     ///
     /// # Errors
     /// The OS error if the thread can't start.
@@ -112,6 +234,21 @@ impl RxThread {
         transport: Arc<dyn Transport>,
         me: PeerId,
         channel: Arc<AtomicU8>,
+        outputs: RxOutputs,
+    ) -> io::Result<Self> {
+        Self::spawn_keyed(transport, me, channel, Arc::default(), outputs)
+    }
+
+    /// Like [`spawn`](Self::spawn), using whatever key is in `key` at the
+    /// time each packet arrives.
+    ///
+    /// # Errors
+    /// The OS error if the thread can't start.
+    pub fn spawn_keyed(
+        transport: Arc<dyn Transport>,
+        me: PeerId,
+        channel: Arc<AtomicU8>,
+        key: Arc<ArcSwapOption<ChannelKey>>,
         outputs: RxOutputs,
     ) -> io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
@@ -122,6 +259,7 @@ impl RxThread {
             .name("takkie-rx".into())
             .spawn(move || {
                 let mut buf = [0_u8; 2048];
+                let mut router = Router::new(me);
                 let mut last_heard: HashMap<PeerId, Instant> = HashMap::new();
                 while !stopping.load(Relaxed) {
                     let (len, from) = match transport.recv_from(&mut buf) {
@@ -137,10 +275,12 @@ impl RxThread {
                     let Ok(current) = ChannelId::try_from(channel.load(Relaxed)) else {
                         continue;
                     };
-                    let Some(datagram) = buf.get(..len) else {
+                    let Some(datagram) = buf.get_mut(..len) else {
                         continue;
                     };
-                    let sent = match route(datagram, from, me, current) {
+                    let now = Instant::now();
+                    let key = key.load();
+                    let sent = match router.route(datagram, from, current, key.as_deref(), now) {
                         Route::Invalid => {
                             counting.invalid.fetch_add(1, Relaxed);
                             true
@@ -153,8 +293,15 @@ impl RxThread {
                             counting.other_channel.fetch_add(1, Relaxed);
                             true
                         }
+                        Route::Replayed => {
+                            counting.replayed.fetch_add(1, Relaxed);
+                            true
+                        }
+                        Route::Mismatch { presence, .. } => {
+                            counting.mismatched.fetch_add(1, Relaxed);
+                            presence.is_none_or(|seen| outputs.peers.send(seen).is_ok())
+                        }
                         Route::Audio(packet) => {
-                            let now = Instant::now();
                             let due = last_heard
                                 .get(&packet.sender)
                                 .is_none_or(|at| now.duration_since(*at) >= HEARD_EVERY);
@@ -208,41 +355,80 @@ mod tests {
     use crossbeam_channel::unbounded;
     use takkie_core::Seq;
     use takkie_core::protocol::HEADER_LEN;
+    use takkie_core::seal::{TAG_LEN, seal_packet};
 
     use super::*;
     use crate::net::transport::MemoryNetwork;
+
+    const ME: PeerId = PeerId::new(1);
+    const THEM: PeerId = PeerId::new(2);
 
     fn channel(n: u8) -> ChannelId {
         ChannelId::try_from(n).unwrap()
     }
 
-    fn datagram(kind: PacketKind, sender: u64, ch: u8, flags: Flags, payload: &[u8]) -> Vec<u8> {
-        let header = Header {
+    fn header(kind: PacketKind, sender: u64, ch: u8, flags: Flags, seq: u32) -> Header {
+        Header {
             kind,
             channel: channel(ch),
             flags,
             sender: PeerId::new(sender),
-            seq: Seq::new(7),
+            seq: Seq::new(seq),
             timestamp: 960,
-        };
+        }
+    }
+
+    fn datagram(kind: PacketKind, sender: u64, ch: u8, flags: Flags, payload: &[u8]) -> Vec<u8> {
         let mut bytes = [0; HEADER_LEN];
-        header.encode(&mut bytes);
+        header(kind, sender, ch, flags, 7).encode(&mut bytes);
         [&bytes[..], payload].concat()
+    }
+
+    fn sealed(kind: PacketKind, ch: u8, seq: u32, payload: &[u8], key: &ChannelKey) -> Vec<u8> {
+        let mut out = vec![0; HEADER_LEN + payload.len() + TAG_LEN];
+        seal_packet(
+            key,
+            header(kind, 2, ch, Flags::NONE, seq),
+            payload,
+            &mut out,
+        )
+        .unwrap();
+        out
+    }
+
+    fn key(byte: u8) -> ChannelKey {
+        ChannelKey::from_bytes([byte; 32])
     }
 
     fn from() -> SocketAddr {
         SocketAddr::from(([192, 168, 1, 20], 41_000))
     }
 
-    const ME: PeerId = PeerId::new(1);
+    fn route(bytes: &[u8]) -> Route {
+        Router::new(ME).route(
+            &mut bytes.to_vec(),
+            from(),
+            channel(3),
+            None,
+            Instant::now(),
+        )
+    }
+
+    fn presence(ch: u8) -> PeerMessage {
+        PeerMessage::Heard {
+            sender: THEM,
+            channel: channel(ch),
+            addr: from(),
+        }
+    }
 
     #[test]
     fn audio_on_our_channel_goes_to_the_mixer() {
         let bytes = datagram(PacketKind::Audio, 2, 3, Flags::END_OF_TRANSMISSION, b"opus");
         assert_eq!(
-            route(&bytes, from(), ME, channel(3)),
+            route(&bytes),
             Route::Audio(RxPacket {
-                sender: PeerId::new(2),
+                sender: THEM,
                 seq: Seq::new(7),
                 payload: b"opus".to_vec(),
                 end: true,
@@ -254,35 +440,28 @@ mod tests {
     fn hello_and_bye_go_to_the_peer_table() {
         let hello = datagram(PacketKind::Hello, 2, 3, Flags::NONE, b"  Kitchen  ");
         assert_eq!(
-            route(&hello, from(), ME, channel(3)),
+            route(&hello),
             Route::Peer(PeerMessage::Hello {
-                sender: PeerId::new(2),
+                sender: THEM,
                 name: "Kitchen".into(),
                 channel: channel(3),
                 addr: from(),
             })
         );
         let bye = datagram(PacketKind::Bye, 2, 3, Flags::NONE, b"");
-        assert_eq!(
-            route(&bye, from(), ME, channel(3)),
-            Route::Peer(PeerMessage::Bye {
-                sender: PeerId::new(2)
-            })
-        );
+        assert_eq!(route(&bye), Route::Peer(PeerMessage::Bye { sender: THEM }));
     }
 
     #[test]
     fn names_are_cleaned_and_capped() {
         let long = "a".repeat(200);
         let hello = datagram(PacketKind::Hello, 2, 3, Flags::NONE, long.as_bytes());
-        let Route::Peer(PeerMessage::Hello { name, .. }) = route(&hello, from(), ME, channel(3))
-        else {
+        let Route::Peer(PeerMessage::Hello { name, .. }) = route(&hello) else {
             unreachable!("a hello routes to the peer table");
         };
         assert_eq!(name.chars().count(), MAX_NAME);
         let bad = datagram(PacketKind::Hello, 2, 3, Flags::NONE, &[0x4B, 0xFF, 0x4B]);
-        let Route::Peer(PeerMessage::Hello { name, .. }) = route(&bad, from(), ME, channel(3))
-        else {
+        let Route::Peer(PeerMessage::Hello { name, .. }) = route(&bad) else {
             unreachable!("a hello routes to the peer table");
         };
         assert_eq!(name, "K\u{FFFD}K");
@@ -291,20 +470,126 @@ mod tests {
     #[test]
     fn other_channels_our_own_and_junk_are_dropped() {
         let other = datagram(PacketKind::Audio, 2, 4, Flags::NONE, b"x");
-        assert_eq!(route(&other, from(), ME, channel(3)), Route::OtherChannel);
+        assert_eq!(route(&other), Route::OtherChannel);
         let away = datagram(PacketKind::Hello, 2, 4, Flags::NONE, b"Away");
         assert_eq!(
-            route(&away, from(), ME, channel(3)),
+            route(&away),
             Route::Peer(PeerMessage::Hello {
-                sender: PeerId::new(2),
+                sender: THEM,
                 name: "Away".into(),
                 channel: channel(4),
                 addr: from(),
             })
         );
         let own = datagram(PacketKind::Audio, 1, 3, Flags::NONE, b"x");
-        assert_eq!(route(&own, from(), ME, channel(3)), Route::Own);
-        assert_eq!(route(b"not takkie", from(), ME, channel(3)), Route::Invalid);
+        assert_eq!(route(&own), Route::Own);
+        assert_eq!(route(b"not takkie"), Route::Invalid);
+    }
+
+    #[test]
+    fn sealed_packets_open_with_our_key_and_only_once() {
+        let mut router = Router::new(ME);
+        let now = Instant::now();
+        let audio = sealed(PacketKind::Audio, 3, 10, b"opus", &key(7));
+        let mut go = |bytes: &[u8]| {
+            router.route(&mut bytes.to_vec(), from(), channel(3), Some(&key(7)), now)
+        };
+        assert_eq!(
+            go(&audio),
+            Route::Audio(RxPacket {
+                sender: THEM,
+                seq: Seq::new(10),
+                payload: b"opus".to_vec(),
+                end: false,
+            })
+        );
+        assert_eq!(go(&audio), Route::Replayed);
+        let hello = sealed(PacketKind::Hello, 3, 11, b"Kitchen", &key(7));
+        assert_eq!(
+            go(&hello),
+            Route::Peer(PeerMessage::Hello {
+                sender: THEM,
+                name: "Kitchen".into(),
+                channel: channel(3),
+                addr: from(),
+            })
+        );
+    }
+
+    #[test]
+    fn the_wrong_key_or_a_missing_one_is_a_mismatch() {
+        let now = Instant::now();
+        let audio = sealed(PacketKind::Audio, 3, 10, b"opus", &key(7));
+        let hello = sealed(PacketKind::Hello, 3, 11, b"Kitchen", &key(7));
+        let clear = datagram(PacketKind::Audio, 2, 3, Flags::NONE, b"opus");
+        let quiet = Route::Mismatch {
+            sender: THEM,
+            presence: None,
+        };
+        let seen = Route::Mismatch {
+            sender: THEM,
+            presence: Some(presence(3)),
+        };
+        let go = |bytes: &[u8], ours: Option<&ChannelKey>| {
+            Router::new(ME).route(&mut bytes.to_vec(), from(), channel(3), ours, now)
+        };
+        assert_eq!(go(&audio, Some(&key(8))), quiet);
+        assert_eq!(go(&hello, Some(&key(8))), seen);
+        assert_eq!(go(&audio, None), quiet);
+        assert_eq!(go(&hello, None), seen);
+        assert_eq!(go(&clear, Some(&key(7))), quiet);
+    }
+
+    #[test]
+    fn a_tampered_packet_does_not_poison_the_replay_window() {
+        let mut router = Router::new(ME);
+        let now = Instant::now();
+        let good = sealed(PacketKind::Audio, 3, 10, b"opus", &key(7));
+        let mut forged = sealed(PacketKind::Audio, 3, 500, b"opus", &key(9));
+        let mut go = |bytes: &mut [u8]| router.route(bytes, from(), channel(3), Some(&key(7)), now);
+        assert!(matches!(go(&mut forged), Route::Mismatch { .. }));
+        assert!(matches!(go(&mut good.clone()), Route::Audio(_)));
+    }
+
+    #[test]
+    fn sealed_presence_from_another_channel_is_shown_but_not_trusted() {
+        let mut router = Router::new(ME);
+        let now = Instant::now();
+        let mut go = |bytes: &[u8]| {
+            router.route(&mut bytes.to_vec(), from(), channel(3), Some(&key(7)), now)
+        };
+        let hello = sealed(PacketKind::Hello, 5, 10, b"Kitchen", &key(9));
+        assert_eq!(go(&hello), Route::Peer(presence(5)));
+        let bye = sealed(PacketKind::Bye, 5, 11, b"", &key(9));
+        assert_eq!(go(&bye), Route::OtherChannel);
+        let audio = sealed(PacketKind::Audio, 5, 12, b"opus", &key(9));
+        assert_eq!(go(&audio), Route::OtherChannel);
+    }
+
+    #[test]
+    fn an_outsider_cannot_say_bye_for_a_private_peer() {
+        let mut router = Router::new(ME);
+        let now = Instant::now();
+        let forged_bye = datagram(PacketKind::Bye, 2, 5, Flags::NONE, b"");
+        let mut go = |bytes: &[u8], at: Instant| {
+            router.route(&mut bytes.to_vec(), from(), channel(3), None, at)
+        };
+        assert_eq!(
+            go(&forged_bye, now),
+            Route::Peer(PeerMessage::Bye { sender: THEM })
+        );
+        go(&sealed(PacketKind::Hello, 5, 10, b"Kitchen", &key(9)), now);
+        assert_eq!(
+            go(&forged_bye, now),
+            Route::Mismatch {
+                sender: THEM,
+                presence: None
+            }
+        );
+        assert_eq!(
+            go(&forged_bye, now + PRIVATE_FOR),
+            Route::Peer(PeerMessage::Bye { sender: THEM })
+        );
     }
 
     #[test]
@@ -330,7 +615,9 @@ mod tests {
         peer.send_to(&datagram(PacketKind::Audio, 2, 9, Flags::NONE, b"c"), to)
             .unwrap();
         peer.send_to(b"junk", to).unwrap();
-        peer.send_to(&datagram(PacketKind::Bye, 2, 3, Flags::NONE, b""), to)
+        peer.send_to(&sealed(PacketKind::Audio, 3, 1, b"d", &key(7)), to)
+            .unwrap();
+        peer.send_to(&datagram(PacketKind::Bye, 4, 3, Flags::NONE, b""), to)
             .unwrap();
 
         let wait = Duration::from_secs(2);
@@ -347,13 +634,14 @@ mod tests {
         assert_eq!(
             peers_out.recv_timeout(wait).unwrap(),
             PeerMessage::Bye {
-                sender: PeerId::new(2)
+                sender: PeerId::new(4)
             }
         );
         let counters = thread.counters();
         drop(thread);
-        assert_eq!(counters.received.load(Relaxed), 5);
+        assert_eq!(counters.received.load(Relaxed), 6);
         assert_eq!(counters.other_channel.load(Relaxed), 1);
         assert_eq!(counters.invalid.load(Relaxed), 1);
+        assert_eq!(counters.mismatched.load(Relaxed), 1);
     }
 }
