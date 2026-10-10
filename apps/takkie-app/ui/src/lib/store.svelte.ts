@@ -55,6 +55,9 @@ export async function connect(): Promise<() => void> {
     engine.onEvent((event) => {
       state = withEvent(state, event, Date.now())
     }),
+    engine.onStopped((why) => {
+      state = withProblem(state, why)
+    }),
   ])
   await begin(engine.permissions())
   return () => stops.forEach((stop) => stop())
@@ -85,6 +88,9 @@ export async function recheck() {
 }
 
 export const openAppSettings = () => ask(engine.openAppSettings())
+
+/** Starts the radio again after it was turned off or failed to start. */
+export const turnOn = () => begin(engine.permissions())
 
 /** Joins `channel`, with the passphrase it had earlier in this session. */
 export async function switchChannel(channel: number) {

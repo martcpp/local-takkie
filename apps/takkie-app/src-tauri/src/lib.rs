@@ -18,6 +18,8 @@ use view::EventView;
 const ENGINE_EVENT: &str = "engine-event";
 /// Carries the latest [`view::SnapshotView`], ten times a second.
 const ENGINE_SNAPSHOT: &str = "engine-snapshot";
+/// Carries the reason, once, when the engine stops while the app runs.
+const ENGINE_STOPPED: &str = "engine-stopped";
 const SNAPSHOT_EVERY: Duration = Duration::from_millis(100);
 
 // Ends by itself once the engine is stopped, or if it never started.
@@ -25,11 +27,19 @@ fn publish_snapshots(app: AppHandle) {
     let publishing = thread::Builder::new()
         .name("takkie-app-live".into())
         .spawn(move || {
-            while let Ok(view) = app.state::<Radio>().view() {
-                if let Err(error) = app.emit(ENGINE_SNAPSHOT, view) {
-                    tracing::debug!("snapshot not sent: {error}");
+            let why = loop {
+                match app.state::<Radio>().view() {
+                    Ok(view) => {
+                        if let Err(error) = app.emit(ENGINE_SNAPSHOT, view) {
+                            tracing::debug!("snapshot not sent: {error}");
+                        }
+                        thread::sleep(SNAPSHOT_EVERY);
+                    }
+                    Err(why) => break why,
                 }
-                thread::sleep(SNAPSHOT_EVERY);
+            };
+            if let Err(error) = app.emit(ENGINE_STOPPED, why) {
+                tracing::debug!("stop not sent: {error}");
             }
         });
     if let Err(error) = publishing {
@@ -95,9 +105,47 @@ fn start_radio(app: AppHandle) -> Result<(), String> {
         }
     })?;
     if started {
+        if let Err(error) = mobile::set_service(&app, true) {
+            tracing::warn!("no foreground service, so the radio stops with the screen: {error}");
+        }
+        stop_on_request(app.clone());
         publish_snapshots(app);
     }
     Ok(())
+}
+
+/// Turns the radio off until `start_radio` is called again.
+fn turn_off(app: &AppHandle) {
+    app.state::<Radio>().stop("You turned the radio off.");
+    tracing::info!("radio turned off");
+    if let Err(error) = mobile::set_service(app, false) {
+        tracing::debug!("service not stopped: {error}");
+    }
+    if let Err(error) = mobile::set_multicast_lock(app, false) {
+        tracing::debug!("multicast lock not released: {error}");
+    }
+}
+
+// The notification's Stop action, which works with the app in the background.
+#[cfg(target_os = "android")]
+fn stop_on_request(app: AppHandle) {
+    let waiting = thread::Builder::new()
+        .name("takkie-app-stop".into())
+        .spawn(move || match mobile::wait_for_stop(&app) {
+            Ok(()) => turn_off(&app),
+            Err(error) => tracing::warn!("the notification's Stop won't work: {error}"),
+        });
+    if let Err(error) = waiting {
+        tracing::warn!("the notification's Stop won't work: {error}");
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn stop_on_request(_app: AppHandle) {}
+
+#[tauri::command(async)]
+fn stop_radio(app: AppHandle) {
+    turn_off(&app);
 }
 
 /// Runs the app until its window closes.
@@ -117,9 +165,11 @@ pub fn run() -> tauri::Result<()> {
     let app = tauri::Builder::default()
         .plugin(mobile::permissions())
         .plugin(mobile::multicast())
+        .plugin(mobile::service())
         .manage(Radio::new())
         .invoke_handler(tauri::generate_handler![
             start_radio,
+            stop_radio,
             commands::permissions,
             commands::request_permissions,
             commands::open_app_settings,
@@ -135,7 +185,7 @@ pub fn run() -> tauri::Result<()> {
         .build(tauri::generate_context!())?;
     app.run(|app, event| {
         if let RunEvent::Exit = event {
-            app.state::<Radio>().stop();
+            app.state::<Radio>().stop("the app is closing");
         }
     });
     Ok(())
