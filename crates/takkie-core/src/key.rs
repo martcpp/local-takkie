@@ -108,14 +108,25 @@ mod tests {
     }
 
     #[test]
-    fn matches_the_reference_argon2_implementation() {
-        assert_eq!(
-            hex(key("correct horse battery staple", 1).expose_secret()),
-            "3a5f7f18f2bccbb3ef7b818a6aab748633b2a6aace8f0fcd66c4a2b259f78840"
-        );
-        assert_eq!(
-            hex(key("takkie", 10).expose_secret()),
-            "2a1fa1e92997e7d4e20a36fd63c0ca893b6b63577084d3f5cba5e75cc929cb05"
-        );
+    fn matches_the_reference_argon2_implementation_and_the_spec() {
+        let spec = include_str!("../../../docs/protocol.md");
+        for (passphrase, channel, expected) in [
+            (
+                "correct horse battery staple",
+                1,
+                "3a5f7f18f2bccbb3ef7b818a6aab748633b2a6aace8f0fcd66c4a2b259f78840",
+            ),
+            (
+                "takkie",
+                10,
+                "2a1fa1e92997e7d4e20a36fd63c0ca893b6b63577084d3f5cba5e75cc929cb05",
+            ),
+        ] {
+            assert_eq!(hex(key(passphrase, channel).expose_secret()), expected);
+            assert!(
+                spec.contains(&format!("\"{passphrase}\", {channel}:")) && spec.contains(expected),
+                "docs/protocol.md doesn't list the {passphrase} vector"
+            );
+        }
     }
 }
