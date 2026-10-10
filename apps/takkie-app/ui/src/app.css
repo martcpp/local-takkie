@@ -38,6 +38,9 @@
 
 body {
   margin: 0;
+  /* No rubber-band scrolling or grey flash on tap: it should feel like an app. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 h2 {
@@ -62,6 +65,16 @@ button {
 button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Fingers need bigger targets than a mouse pointer. */
+@media (pointer: coarse) {
+  button {
+    min-height: 3rem;
+    min-width: 3rem;
+    user-select: none;
+    -webkit-user-select: none;
+  }
 }
 
 :focus-visible {
