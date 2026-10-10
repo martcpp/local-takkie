@@ -3,6 +3,7 @@
 pub mod dsp;
 mod ids;
 pub mod jitter;
+pub mod key;
 mod passphrase;
 pub mod peers;
 pub mod protocol;

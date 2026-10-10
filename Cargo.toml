@@ -28,6 +28,10 @@ todo = "warn"
 dbg_macro = "warn"
 print_stdout = "warn"
 
+# Argon2 is unusably slow unoptimised; this keeps debug builds and tests quick.
+[profile.dev.package.argon2]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
