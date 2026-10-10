@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 chrono = "0.4"
+clap = { version = "4.6", features = ["derive", "env"] }
 crossbeam-channel = { workspace = true }
 directories = "6"
 gethostname = "1.1"

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use takkie_core::ChannelId;
 
 /// How push-to-talk behaves; used once E9.3 lands.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum PttMode {
     /// Hold if the terminal reports key releases, toggle otherwise.

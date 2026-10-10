@@ -32,10 +32,13 @@ cd local-takkie
 cargo run --release -p takkie-tui
 ```
 
-That's it: by default it uses your computer's name and any free port. You can
-also choose them, `takkie [name] [port]`, for example
-`cargo run --release -p takkie-tui -- alice 5000`. To try it on a single
-computer, just start two copies.
+That's it: by default it uses your computer's name, channel 1 and any free
+port. Flags change that, for example
+`cargo run --release -p takkie-tui -- --name alice --channel 2`. Run
+`takkie --help` for all of them (`--port`, `--input-device`,
+`--output-device`, `--list-devices`, `--peer`, `--ptt-mode`, `--log-level`,
+`--config`). The name, channel and devices you use are remembered for next
+time. To try it on a single computer, just start two copies.
 
 With a release download, run `takkie` (or double-click `takkie.exe` on
 Windows).
