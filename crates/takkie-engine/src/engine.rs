@@ -819,6 +819,17 @@ mod tests {
         }
     }
 
+    fn eventually(done: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !done() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            after(20);
+        }
+        true
+    }
+
     fn after(ms: u64) {
         thread::sleep(Duration::from_millis(ms));
     }
@@ -1001,9 +1012,10 @@ mod tests {
 
         a.engine.set_channel(three, None);
         b.engine.set_channel(three, None);
+        let open = |node: &Node| !node.engine.snapshot().private;
+        assert!(eventually(|| open(&a) && open(&b)), "still private");
         let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "open again: B heard {heard}");
-        assert!(!b.engine.snapshot().private);
     }
 
     #[test]
