@@ -16,7 +16,7 @@ const USAGE: &str = "usage: cargo xtask <command>
 
 commands:
   ci                  run the checks CI runs: fmt, clippy, tests and cargo-deny
-  gui                 check the desktop app: frontend types and build, clippy, tests
+  gui                 check the desktop app: frontend types, tests and build, clippy, tests
   fmt                 format the whole workspace
   release <version>   set the version and regenerate CHANGELOG.md, e.g. release 0.2.0";
 
@@ -55,6 +55,7 @@ fn gui() -> Result<()> {
         npm(&["--prefix", ui, "ci"])?;
     }
     npm(&["--prefix", ui, "run", "check"])?;
+    npm(&["--prefix", ui, "test"])?;
     npm(&["--prefix", ui, "run", "build"])?;
     cargo(&["clippy", "-p", GUI, "--all-targets", "--", "-D", "warnings"])?;
     cargo(&["test", "-p", GUI])?;

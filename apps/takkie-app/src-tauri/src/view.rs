@@ -5,7 +5,7 @@ use std::time::Instant;
 use serde::Serialize;
 use takkie_core::PeerId;
 use takkie_core::dsp::Level;
-use takkie_engine::{DeviceInfo, DeviceList, EngineSnapshot, PeerInfo};
+use takkie_engine::{DeviceInfo, DeviceList, EngineEvent, EngineSnapshot, PeerInfo};
 
 /// Loudness of the latest frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -94,6 +94,65 @@ impl SnapshotView {
     }
 }
 
+/// Something that just happened, for the frontend to react to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum EventView {
+    /// A peer appeared.
+    PeerJoined { peer: PeerView },
+    /// A peer's name, channel or address changed.
+    PeerUpdated { peer: PeerView },
+    /// A peer left or went quiet.
+    PeerLeft { id: String },
+    /// A peer's voice started playing.
+    TalkStarted { id: String },
+    /// A peer's voice stopped.
+    TalkStopped { id: String },
+    /// A peer on our channel uses another passphrase.
+    WrongPassphrase { id: String },
+    /// A microphone or speaker is running.
+    DeviceStarted {
+        direction: String,
+        description: String,
+    },
+    /// A microphone or speaker went away.
+    DeviceLost { direction: String },
+    /// Worth showing to the user.
+    Warning { text: String },
+}
+
+impl EventView {
+    /// The event as the frontend sees it, or `None` for one this app
+    /// doesn't know yet.
+    pub fn at(event: &EngineEvent, now: Instant) -> Option<Self> {
+        let id = |id: &PeerId| id.to_string();
+        Some(match event {
+            EngineEvent::PeerJoined(peer) => Self::PeerJoined {
+                peer: PeerView::at(peer, now),
+            },
+            EngineEvent::PeerUpdated(peer) => Self::PeerUpdated {
+                peer: PeerView::at(peer, now),
+            },
+            EngineEvent::PeerLeft(peer) => Self::PeerLeft { id: id(peer) },
+            EngineEvent::TalkStarted(peer) => Self::TalkStarted { id: id(peer) },
+            EngineEvent::TalkStopped(peer) => Self::TalkStopped { id: id(peer) },
+            EngineEvent::WrongPassphrase(peer) => Self::WrongPassphrase { id: id(peer) },
+            EngineEvent::DeviceStarted {
+                direction,
+                description,
+            } => Self::DeviceStarted {
+                direction: direction.to_string(),
+                description: description.clone(),
+            },
+            EngineEvent::DeviceLost(direction) => Self::DeviceLost {
+                direction: direction.to_string(),
+            },
+            EngineEvent::Warning(text) => Self::Warning { text: text.clone() },
+            _ => return None,
+        })
+    }
+}
+
 /// A microphone or speaker to choose from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,7 +201,7 @@ mod tests {
     use std::time::Duration;
 
     use takkie_core::ChannelId;
-    use takkie_engine::EngineStats;
+    use takkie_engine::{Direction, EngineStats};
 
     use super::*;
 
@@ -199,6 +258,48 @@ mod tests {
         assert_eq!(peer["talking"], true);
         assert_eq!(peer["muted"], true);
         assert_eq!(peer["mismatch"], false);
+    }
+
+    fn event(event: &EngineEvent) -> serde_json::Value {
+        serde_json::to_value(EventView::at(event, Instant::now())).unwrap()
+    }
+
+    #[test]
+    fn every_event_is_tagged_with_its_type() {
+        let now = Instant::now();
+        let id = PeerId::new(0xAB);
+        let joined = event(&EngineEvent::PeerJoined(peer(0xAB, now)));
+        assert_eq!(joined["type"], "peerJoined");
+        assert_eq!(joined["peer"]["id"], "00000000000000ab");
+        assert_eq!(joined["peer"]["name"], "Kitchen");
+        let updated = event(&EngineEvent::PeerUpdated(peer(0xAB, now)));
+        assert_eq!(updated["type"], "peerUpdated");
+        assert_eq!(updated["peer"]["channel"], 4);
+
+        for (sent, kind) in [
+            (EngineEvent::PeerLeft(id), "peerLeft"),
+            (EngineEvent::TalkStarted(id), "talkStarted"),
+            (EngineEvent::TalkStopped(id), "talkStopped"),
+            (EngineEvent::WrongPassphrase(id), "wrongPassphrase"),
+        ] {
+            let json = event(&sent);
+            assert_eq!(json["type"], kind);
+            assert_eq!(json["id"], "00000000000000ab");
+        }
+
+        let started = event(&EngineEvent::DeviceStarted {
+            direction: Direction::Input,
+            description: "Headset (48000 Hz)".into(),
+        });
+        assert_eq!(started["type"], "deviceStarted");
+        assert_eq!(started["direction"], "input");
+        assert_eq!(started["description"], "Headset (48000 Hz)");
+        let lost = event(&EngineEvent::DeviceLost(Direction::Output));
+        assert_eq!(lost["type"], "deviceLost");
+        assert_eq!(lost["direction"], "output");
+        let warning = event(&EngineEvent::Warning("no such microphone".into()));
+        assert_eq!(warning["type"], "warning");
+        assert_eq!(warning["text"], "no such microphone");
     }
 
     #[test]

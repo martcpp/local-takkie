@@ -1,13 +1,17 @@
 <script lang="ts">
   import { getVersion } from '@tauri-apps/api/app'
-  import { invoke } from '@tauri-apps/api/core'
+  import { onMount } from 'svelte'
 
-  type Snapshot = { channel: number; private: boolean; peers: unknown[] }
-  type Devices = { inputs: unknown[]; outputs: unknown[] }
+  import { app, connect } from './lib/store.svelte'
 
   const version = getVersion()
-  const snapshot = invoke<Snapshot>('snapshot')
-  const devices = invoke<Devices>('list_devices')
+
+  onMount(() => {
+    const connected = connect()
+    return () => {
+      void connected.then((stop) => stop())
+    }
+  })
 </script>
 
 <main>
@@ -15,21 +19,21 @@
   {#await version then number}
     <p class="version">version {number}</p>
   {/await}
-  {#await snapshot}
-    <p>Starting…</p>
-  {:then now}
+  {#if app.problem}
+    <p class="error">{app.problem}</p>
+  {:else if app.snapshot}
     <p>
-      Channel {now.channel}{now.private ? ' (private)' : ''}, {now.peers.length} others on the
-      network.
+      Channel {app.snapshot.channel}{app.snapshot.private ? ' (private)' : ''},
+      {app.snapshot.peers.length} others on the network.
     </p>
-  {:catch error}
-    <p class="error">{error}</p>
-  {/await}
-  {#await devices then found}
-    <p>{found.inputs.length} microphones and {found.outputs.length} speakers found.</p>
-  {:catch error}
-    <p class="error">Audio devices can't be listed: {error}</p>
-  {/await}
+  {:else}
+    <p>Starting…</p>
+  {/if}
+  <ul>
+    {#each app.log.slice(-5) as line (line.at + line.text)}
+      <li>{line.text}</li>
+    {/each}
+  </ul>
 </main>
 
 <style>
@@ -49,6 +53,14 @@
 
   p {
     margin: 0;
+  }
+
+  ul {
+    margin: 0.5rem 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--muted);
+    font-size: 0.875rem;
   }
 
   .version {

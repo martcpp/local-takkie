@@ -4,7 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
 
 use takkie_core::{ChannelId, Passphrase};
-use takkie_engine::{Engine, EngineConfig};
+use takkie_engine::{Engine, EngineConfig, EngineEvent};
 use tauri::State;
 
 use crate::view::{DevicesView, SnapshotView, peer_id};
@@ -13,19 +13,15 @@ use crate::view::{DevicesView, SnapshotView, peer_id};
 pub struct Radio(Mutex<Result<Engine, String>>);
 
 impl Radio {
-    /// Starts the engine. A failure is kept, so the window can show it.
-    pub fn start(config: EngineConfig) -> Self {
+    /// Starts the engine and hands each of its events to `on_event`. A
+    /// failure is kept, so the window can show it.
+    pub fn start(config: EngineConfig, on_event: impl Fn(EngineEvent) + Send + 'static) -> Self {
         let started = match Engine::start(config) {
             Ok((engine, events)) => {
-                // Drained here until the frontend listens (E13.2b).
-                let drained = std::thread::Builder::new()
+                let forwarding = std::thread::Builder::new()
                     .name("takkie-app-events".into())
-                    .spawn(move || {
-                        for event in events {
-                            tracing::debug!(?event, "engine event");
-                        }
-                    });
-                if let Err(error) = drained {
+                    .spawn(move || events.into_iter().for_each(on_event));
+                if let Err(error) = forwarding {
                     tracing::warn!("engine events won't be read: {error}");
                 }
                 Ok(engine)
@@ -43,6 +39,11 @@ impl Radio {
         if let Ok(mut engine) = self.0.lock() {
             *engine = Err("the app is closing".to_owned());
         }
+    }
+
+    /// What the main screen draws right now.
+    pub fn view(&self) -> Result<SnapshotView, String> {
+        self.with(|engine| SnapshotView::at(&engine.snapshot(), Instant::now()))
     }
 
     fn with<T>(&self, action: impl FnOnce(&Engine) -> T) -> Result<T, String> {
@@ -70,7 +71,7 @@ fn join(
 
 #[tauri::command]
 pub fn snapshot(radio: State<'_, Radio>) -> Result<SnapshotView, String> {
-    radio.with(|engine| SnapshotView::at(&engine.snapshot(), Instant::now()))
+    radio.view()
 }
 
 #[tauri::command]
@@ -142,6 +143,7 @@ mod tests {
             asked,
             Err("The engine isn't running: the port is taken".to_owned())
         );
+        assert_eq!(radio.view().err(), asked.err());
         radio.stop();
         let asked = radio.with(|engine| engine.set_muted(true));
         assert_eq!(

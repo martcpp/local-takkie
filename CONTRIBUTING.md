@@ -72,8 +72,8 @@ without Node or WebKitGTK. When you change anything under `apps/`, also run:
 cargo xtask gui
 ```
 
-It type-checks and builds the frontend, then runs clippy and the tests for
-the app.
+It type-checks, tests and builds the frontend, then runs clippy and the
+Rust tests for the app.
 
 ## Checking discovery on a real network
 
