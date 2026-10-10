@@ -8,7 +8,7 @@ publish.workspace = true
 
 [dependencies]
 arc-swap = "1"
-cpal = "0.17.0"
+cpal = "0.18.2"
 crossbeam-channel = { workspace = true }
 getrandom = "0.4"
 if-addrs = "0.15"
