@@ -4,10 +4,11 @@ A push-to-talk walkie-talkie for your local network. Run it on two or more
 computers on the same Wi-Fi or LAN and they find each other on their own. Hold
 the space bar to talk to everyone else; no internet, server or account needed.
 
-> **Status: early prototype.** It works in the simple case, but it is being
-> rebuilt into a terminal app, a desktop app and an Android app, with 10
-> channels and optional encryption. The plan is in [ROADMAP.md](ROADMAP.md)
-> and progress is on the [project board](https://github.com/users/martcpp/projects/3).
+> **Status: the terminal app works; more is coming.** The audio and network
+> engine has been rebuilt and the terminal app runs on it. Still to come:
+> switching channels from inside the app, optional encryption, a desktop app
+> and an Android app. The plan is in [ROADMAP.md](ROADMAP.md) and progress is
+> on the [project board](https://github.com/users/martcpp/projects/3).
 
 ## What you need
 
@@ -45,31 +46,62 @@ Windows).
 
 ## Using it
 
-- **Hold SPACE** to talk, let go to stop.
-- **Q** or **Esc** quits.
-- Other people show up in the peer list a few seconds after they start.
+Other people show up in the peer list a few seconds after they start, with a
+green dot while they talk. Press `?` in the app for the list of keys:
 
-Known limits of the prototype (all planned fixes, see the roadmap):
+| Key | Does |
+|---|---|
+| `SPACE` | Talk. Hold it where your terminal can tell when you let go, otherwise press once to start and once to stop. The footer says which. |
+| `T` | Switch between hold and toggle |
+| `M` | Mute or unmute what you hear |
+| `+` / `-` | Volume up or down |
+| `D` | Show the microphone and speaker in use |
+| `?` | Help |
+| `Q` / `Esc` | Quit |
 
-- Most macOS and Linux terminals don't report when a key is released, so
-  talking stops a moment after the last key repeat and can cut in and out.
-  Windows Terminal works properly.
-- Your microphone and speakers must support 48 kHz audio.
-- People who quit stay in the peer list.
+Your name, channel and devices are kept in a settings file, and the app shows
+where it is when it starts. Everyone on the same channel hears each other;
+choose one with `--channel 1` to `--channel 10`.
+
+## Terminals
+
+How well `takkie` works depends on the terminal, mostly on whether it tells
+the app when a key is released (that decides hold-to-talk or toggle).
+
+| Terminal | Talk key | Colours, emoji, resizing | Checked |
+|---|---|---|---|
+| Git Bash (mintty), Windows 11 | Hold | Good | Yes, v0.2.0 development build |
+| Windows Terminal, PowerShell, cmd | Hold expected (Windows reports key releases) | Not tested yet | No |
+| VS Code terminal, Windows | Hold expected | Not tested yet | No |
+| kitty, foot, Ghostty, Alacritty, WezTerm | Hold expected (kitty keyboard protocol; WezTerm needs it switched on) | Not tested yet | No |
+| macOS Terminal, iTerm2, GNOME Terminal | Toggle expected (no key releases) | Not tested yet | No |
+
+The app says what it found when it starts (`Key releases: ...`) and the
+footer always shows the current mode. `T` switches, and `--ptt-mode hold` or
+`--ptt-mode toggle` forces one.
 
 ## Troubleshooting
 
-**People can't see each other.** Make sure everyone is on the same network,
-and allow the app through the firewall (Windows asks on first run: allow it on
-private networks). It needs your chosen UDP port and mDNS (UDP 5353). Guest
-Wi-Fi often stops devices from seeing each other.
+**People can't see each other.** Make sure everyone is on the same network
+and the same channel, and allow the app through the firewall (Windows asks on
+first run: allow it on private networks). It needs its UDP port and mDNS (UDP
+5353). Guest Wi-Fi often stops devices from finding each other; if so, start
+one side with the other's address, `takkie --peer 192.168.1.20:40000` (the
+port is in the other app's header).
 
-**CMake can't find Visual Studio** (Windows). If CMake picks a Visual Studio
-version that isn't fully installed, point it at the one you have, for example
-in PowerShell: `$env:CMAKE_GENERATOR = "Visual Studio 17 2022"`.
+**No sound.** Run `takkie --list-devices` and pick one with `--input-device`
+or `--output-device`; part of the name is enough. Press `D` in the app to see
+what it's using, and watch the Mic and Speaker meters.
 
-**No sound, or it crashes at start.** Check your default input and output
-devices, and that they support 48 kHz.
+**It won't start.** It prints one line saying why, for example a port that's
+already in use or no microphone. Warnings and errors also appear in the
+app's Events Log and in the log file, whose folder is shown at startup. For
+more detail, start with `--log-level debug`.
+
+**CMake can't find Visual Studio** (Windows, building from source). If CMake
+picks a Visual Studio version that isn't fully installed, point it at the one
+you have, for example in PowerShell:
+`$env:CMAKE_GENERATOR = "Visual Studio 17 2022"`.
 
 ## Development
 
