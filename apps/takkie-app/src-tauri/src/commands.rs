@@ -5,8 +5,9 @@ use std::time::Instant;
 
 use takkie_core::{ChannelId, Passphrase};
 use takkie_engine::{Engine, EngineConfig, EngineEvent};
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::mobile::{self, Access};
 use crate::view::{DevicesView, Running, SnapshotView, peer_id};
 
 /// The running engine, or why there isn't one.
@@ -16,11 +17,30 @@ pub struct Radio {
 }
 
 impl Radio {
-    /// Starts the engine and hands each of its events to `on_event`. A
-    /// failure is kept, so the window can show it.
-    pub fn start(config: EngineConfig, on_event: impl Fn(EngineEvent) + Send + 'static) -> Self {
-        let running = Arc::new(Mutex::new(Running::default()));
-        let noting = Arc::clone(&running);
+    /// A radio that is off until [`start`](Self::start).
+    pub fn new() -> Self {
+        Self {
+            engine: Mutex::new(Err("it hasn't been started yet".to_owned())),
+            running: Arc::default(),
+        }
+    }
+
+    /// Starts the engine and hands each of its events to `on_event`.
+    /// Returns `false` if it was running already. A failure is kept, so the
+    /// window can show it, and starting can be tried again.
+    pub fn start(
+        &self,
+        config: EngineConfig,
+        on_event: impl Fn(EngineEvent) + Send + 'static,
+    ) -> Result<bool, String> {
+        let mut engine = self
+            .engine
+            .lock()
+            .map_err(|_| "the engine stopped unexpectedly".to_owned())?;
+        if engine.is_ok() {
+            return Ok(false);
+        }
+        let noting = Arc::clone(&self.running);
         let started = match Engine::start(config) {
             Ok((engine, events)) => {
                 let forwarding = std::thread::Builder::new()
@@ -43,10 +63,9 @@ impl Radio {
                 Err(error.to_string())
             }
         };
-        Self {
-            engine: Mutex::new(started),
-            running,
-        }
+        let outcome = started.as_ref().map(|_| true).map_err(Clone::clone);
+        *engine = started;
+        outcome
     }
 
     /// Stops the engine: threads joined, Bye sent, mDNS unregistered.
@@ -87,6 +106,23 @@ fn join(
     // An empty passphrase means an open channel.
     let passphrase = passphrase.and_then(|secret| Passphrase::new(secret).ok());
     Ok((channel, passphrase))
+}
+
+// Async, like every command that reaches Kotlin: it answers on the main
+// thread, which a plain command would be blocking.
+#[tauri::command]
+pub async fn permissions(app: AppHandle) -> Result<Access, String> {
+    mobile::access(&app)
+}
+
+#[tauri::command]
+pub async fn request_permissions(app: AppHandle) -> Result<Access, String> {
+    mobile::ask(&app)
+}
+
+#[tauri::command]
+pub async fn open_app_settings(app: AppHandle) -> Result<(), String> {
+    mobile::open_settings(&app)
 }
 
 #[tauri::command]
@@ -157,10 +193,14 @@ mod tests {
 
     #[test]
     fn a_stopped_radio_says_why_instead_of_acting() {
-        let radio = Radio {
-            engine: Mutex::new(Err("the port is taken".to_owned())),
-            running: Arc::default(),
-        };
+        let radio = Radio::new();
+        assert_eq!(
+            radio.view().err(),
+            Some("The engine isn't running: it hasn't been started yet".to_owned())
+        );
+        if let Ok(mut engine) = radio.engine.lock() {
+            *engine = Err("the port is taken".to_owned());
+        }
         let asked = radio.with(|engine| engine.set_muted(true));
         assert_eq!(
             asked,

@@ -1,6 +1,7 @@
 //! The local-takkie desktop and Android app: a Tauri window around the engine.
 
 mod commands;
+mod mobile;
 mod view;
 
 use std::thread;
@@ -69,6 +70,30 @@ fn phone_name() -> Option<String> {
     None
 }
 
+/// Starts the engine, once the frontend knows the microphone is allowed.
+/// Doing nothing when it already runs lets the frontend call it freely.
+#[tauri::command(async)]
+fn start_radio(app: AppHandle) -> Result<(), String> {
+    let config = EngineConfig {
+        display_name: device_name(),
+        ..EngineConfig::default()
+    };
+    let events = app.clone();
+    let started = app.state::<Radio>().start(config, move |event| {
+        tracing::debug!(?event, "engine event");
+        let Some(view) = EventView::at(&event, Instant::now()) else {
+            return;
+        };
+        if let Err(error) = events.emit(ENGINE_EVENT, view) {
+            tracing::debug!("event not sent: {error}");
+        }
+    })?;
+    if started {
+        publish_snapshots(app);
+    }
+    Ok(())
+}
+
 /// Runs the app until its window closes.
 ///
 /// # Errors
@@ -84,25 +109,13 @@ pub fn run() -> tauri::Result<()> {
         )
         .try_init();
     let app = tauri::Builder::default()
-        .setup(|app| {
-            let config = EngineConfig {
-                display_name: device_name(),
-                ..EngineConfig::default()
-            };
-            let events = app.handle().clone();
-            app.manage(Radio::start(config, move |event| {
-                tracing::debug!(?event, "engine event");
-                let Some(view) = EventView::at(&event, Instant::now()) else {
-                    return;
-                };
-                if let Err(error) = events.emit(ENGINE_EVENT, view) {
-                    tracing::debug!("event not sent: {error}");
-                }
-            }));
-            publish_snapshots(app.handle().clone());
-            Ok(())
-        })
+        .plugin(mobile::permissions())
+        .manage(Radio::new())
         .invoke_handler(tauri::generate_handler![
+            start_radio,
+            commands::permissions,
+            commands::request_permissions,
+            commands::open_app_settings,
             commands::snapshot,
             commands::set_transmitting,
             commands::set_channel,
