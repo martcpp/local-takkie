@@ -72,6 +72,7 @@ fn main() -> ExitCode {
         output_device: current.output_device.clone(),
         static_peers: cli.peers.clone(),
         half_duplex: current.half_duplex,
+        beeps: current.beeps,
     }) {
         Ok(started) => started,
         Err(err) => {

@@ -31,6 +31,7 @@ pub struct Settings {
     pub output_device: Option<String>,
     pub ptt_mode: PttMode,
     pub half_duplex: bool,
+    pub beeps: bool,
 }
 
 impl Default for Settings {
@@ -42,6 +43,7 @@ impl Default for Settings {
             output_device: None,
             ptt_mode: PttMode::Auto,
             half_duplex: true,
+            beeps: false,
         }
     }
 }
@@ -123,6 +125,7 @@ mod tests {
             output_device = "Speakers"
             ptt_mode = "toggle"
             half_duplex = false
+            beeps = true
         "#;
         assert_eq!(
             parse(text),
@@ -133,16 +136,18 @@ mod tests {
                 output_device: Some("Speakers".into()),
                 ptt_mode: PttMode::Toggle,
                 half_duplex: false,
+                beeps: true,
             })
         );
     }
 
     #[test]
     fn missing_keys_get_defaults_and_unknown_keys_are_ignored() {
-        let settings = parse("channel = 7\nbeeps = true\n").unwrap();
+        let settings = parse("channel = 7\ntheme = \"dark\"\n").unwrap();
         assert_eq!(settings.channel().get(), 7);
         assert_eq!(settings.name, None);
         assert!(settings.half_duplex);
+        assert!(!settings.beeps);
         assert_eq!(settings.ptt_mode, PttMode::Auto);
     }
 

@@ -67,6 +67,10 @@ Your name, channel and devices are kept in a settings file, and the app shows
 where it is when it starts. Everyone on the same channel hears each other;
 choose one with the digit keys or `--channel`.
 
+**Beeps.** Set `beeps = true` in the settings file to hear a short tone when
+someone finishes talking and another when you start. They are off by default
+and are made on your own device, so nobody else hears yours.
+
 **Private channels.** A channel is open by default: anyone on the same
 network can listen and talk. Press `P` and type a passphrase to make it
 private; everyone who should hear you sets the same passphrase on the same
