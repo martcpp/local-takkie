@@ -3,7 +3,12 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
+use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -18,6 +23,62 @@ const MAX_EVENTS: usize = 100;
 // Without key-release events, a held key only shows up as repeats, and the
 // first repeat comes after the OS repeat delay (often 500 ms).
 const RELEASE_GUESS: Duration = Duration::from_millis(600);
+
+/// Whether this terminal tells us when a key is let go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyReleases {
+    /// The Windows console always does.
+    Native,
+    /// Through the kitty keyboard protocol, switched on while we run.
+    Enhanced,
+    /// Neither; a held key only shows up as repeats.
+    Missing,
+}
+
+impl KeyReleases {
+    fn detect(windows: bool, enhancement: io::Result<bool>) -> Self {
+        if windows {
+            Self::Native
+        } else if enhancement.unwrap_or(false) {
+            Self::Enhanced
+        } else {
+            Self::Missing
+        }
+    }
+
+    pub fn reported(self) -> bool {
+        self != Self::Missing
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Native => "⌨️ Key releases: reported by Windows, hold SPACE to talk",
+            Self::Enhanced => {
+                "⌨️ Key releases: reported (kitty keyboard protocol), hold SPACE to talk"
+            }
+            Self::Missing => {
+                "⌨️ Key releases: not reported by this terminal, talking stops 0.6 s after the last key repeat"
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Key {
+    Quit,
+    SpaceDown,
+    SpaceUp,
+}
+
+fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
+    match (code, kind) {
+        (KeyCode::Char(' '), KeyEventKind::Press | KeyEventKind::Repeat) => Some(Key::SpaceDown),
+        (KeyCode::Char(' '), KeyEventKind::Release) => Some(Key::SpaceUp),
+        (_, KeyEventKind::Release) => None,
+        (KeyCode::Char('q' | 'Q') | KeyCode::Esc, _) => Some(Key::Quit),
+        _ => None,
+    }
+}
 
 /// The newest event lines, oldest dropped first.
 #[derive(Debug, Default)]
@@ -70,7 +131,27 @@ impl App {
 /// even if something panics.
 pub fn run(mut app: App, engine: &Engine, events: &Receiver<EngineEvent>) -> io::Result<()> {
     let mut terminal = ratatui::try_init()?;
-    let result = run_app(&mut terminal, &mut app, engine, events);
+    let windows = cfg!(windows);
+    let releases = KeyReleases::detect(
+        windows,
+        if windows {
+            Ok(false)
+        } else {
+            supports_keyboard_enhancement()
+        },
+    );
+    if releases == KeyReleases::Enhanced {
+        execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+        )?;
+    }
+    tracing::info!(?releases, "key releases");
+    app.note(releases.describe());
+    let result = run_app(&mut terminal, &mut app, engine, events, releases);
+    if releases == KeyReleases::Enhanced {
+        let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
     ratatui::restore();
     result
 }
@@ -80,10 +161,11 @@ fn run_app(
     app: &mut App,
     engine: &Engine,
     events: &Receiver<EngineEvent>,
+    releases: KeyReleases,
 ) -> io::Result<()> {
     let tick_rate = Duration::from_millis(50);
     let mut last_space = Instant::now();
-    let mut release_works = cfg!(windows);
+    let mut release_works = releases.reported();
     loop {
         let snapshot = engine.snapshot();
         for event in events.try_iter() {
@@ -94,19 +176,17 @@ fn run_app(
         if event::poll(tick_rate)?
             && let Event::Key(key) = event::read()?
         {
-            match key.code {
-                KeyCode::Char('q' | 'Q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Char(' ') => match key.kind {
-                    KeyEventKind::Press | KeyEventKind::Repeat => {
-                        last_space = Instant::now();
-                        set_talking(app, engine, true);
-                    }
-                    KeyEventKind::Release => {
-                        release_works = true;
-                        set_talking(app, engine, false);
-                    }
-                },
-                _ => {}
+            match key_action(key.code, key.kind) {
+                Some(Key::Quit) => return Ok(()),
+                Some(Key::SpaceDown) => {
+                    last_space = Instant::now();
+                    set_talking(app, engine, true);
+                }
+                Some(Key::SpaceUp) => {
+                    release_works = true;
+                    set_talking(app, engine, false);
+                }
+                None => {}
             }
         }
 
@@ -373,6 +453,29 @@ mod tests {
             peers,
             stats: EngineStats::default(),
         }
+    }
+
+    #[test]
+    fn windows_always_reports_releases_and_others_need_the_protocol() {
+        assert_eq!(KeyReleases::detect(true, Ok(false)), KeyReleases::Native);
+        assert_eq!(KeyReleases::detect(false, Ok(true)), KeyReleases::Enhanced);
+        assert_eq!(KeyReleases::detect(false, Ok(false)), KeyReleases::Missing);
+        let no_answer = Err(io::Error::other("no reply"));
+        assert_eq!(KeyReleases::detect(false, no_answer), KeyReleases::Missing);
+        assert!(KeyReleases::Native.reported());
+        assert!(!KeyReleases::Missing.reported());
+    }
+
+    #[test]
+    fn only_space_cares_about_releases() {
+        use KeyEventKind::{Press, Release, Repeat};
+        assert_eq!(key_action(KeyCode::Char(' '), Press), Some(Key::SpaceDown));
+        assert_eq!(key_action(KeyCode::Char(' '), Repeat), Some(Key::SpaceDown));
+        assert_eq!(key_action(KeyCode::Char(' '), Release), Some(Key::SpaceUp));
+        assert_eq!(key_action(KeyCode::Char('q'), Press), Some(Key::Quit));
+        assert_eq!(key_action(KeyCode::Esc, Press), Some(Key::Quit));
+        assert_eq!(key_action(KeyCode::Char('q'), Release), None);
+        assert_eq!(key_action(KeyCode::Char('x'), Press), None);
     }
 
     #[test]
