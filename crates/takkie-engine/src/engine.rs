@@ -133,6 +133,8 @@ pub struct PeerInfo {
     pub talking: bool,
     /// When we last heard from them: a Hello, audio or mDNS.
     pub last_seen: Instant,
+    /// On our channel, but their packets don't match our passphrase.
+    pub mismatch: bool,
 }
 
 /// Something the UI should react to.
@@ -149,6 +151,9 @@ pub enum EngineEvent {
     TalkStarted(PeerId),
     /// A peer's voice stopped.
     TalkStopped(PeerId),
+    /// A peer on our channel uses another passphrase, or none while we use
+    /// one, or one while we use none. We can't hear each other.
+    WrongPassphrase(PeerId),
     /// A microphone or speaker is running.
     DeviceStarted {
         /// Which side.
@@ -239,6 +244,7 @@ struct Shared {
     peers: Arc<ArcSwap<Vec<Peer>>>,
     sent: Arc<SendCounters>,
     received: Arc<RxCounters>,
+    mismatched: Arc<ArcSwap<Vec<PeerId>>>,
     mic: Arc<ArcSwapOption<Counters>>,
     speaker: Arc<ArcSwapOption<Counters>>,
 }
@@ -252,6 +258,7 @@ impl Shared {
             addr: peer.addr,
             talking: self.mix.talking.load().contains(&peer.id),
             last_seen: peer.last_seen,
+            mismatch: self.mismatched.load().contains(&peer.id),
         }
     }
 
@@ -380,6 +387,7 @@ impl Engine {
             peers: peer_view,
             sent: sender.counters(),
             received: rx.counters(),
+            mismatched: rx.mismatched(),
             mic: Arc::default(),
             speaker: Arc::default(),
         };
@@ -420,6 +428,7 @@ impl Engine {
             shared: shared.clone(),
             events,
             heard: Vec::new(),
+            mismatched: Vec::new(),
         };
         let control = thread::Builder::new()
             .name("takkie-control".into())
@@ -552,6 +561,7 @@ struct Control<O: DeviceOpener> {
     shared: Shared,
     events: Sender<EngineEvent>,
     heard: Vec<PeerId>,
+    mismatched: Vec<PeerId>,
 }
 
 impl<O: DeviceOpener> Control<O> {
@@ -586,6 +596,7 @@ impl<O: DeviceOpener> Control<O> {
                 default(TALK_CHECK_EVERY) => {}
             }
             self.talk();
+            self.mismatches();
             let now = Instant::now();
             if now >= next_poll {
                 let changes = self.session.poll(now);
@@ -642,6 +653,20 @@ impl<O: DeviceOpener> Control<O> {
             self.send(EngineEvent::TalkStopped(id));
         }
         self.heard = talking.to_vec();
+    }
+}
+
+impl<O: DeviceOpener> Control<O> {
+    fn mismatches(&mut self) {
+        let now = self.shared.mismatched.load();
+        if **now == self.mismatched {
+            return;
+        }
+        for &id in now.iter().filter(|id| !self.mismatched.contains(id)) {
+            tracing::warn!(%id, "a peer on our channel doesn't match our passphrase");
+            self.send(EngineEvent::WrongPassphrase(id));
+        }
+        self.mismatched = now.to_vec();
     }
 }
 
@@ -989,6 +1014,34 @@ mod tests {
         assert_eq!(inside.peers.len(), 3);
         assert!(inside.stats.packets_mismatched > 0);
         assert!(!open.engine.snapshot().private);
+
+        let flagged = |snapshot: &EngineSnapshot| -> Vec<PeerId> {
+            let mut ids: Vec<PeerId> = snapshot
+                .peers
+                .iter()
+                .filter(|peer| peer.mismatch)
+                .map(|peer| peer.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let mut outsiders = vec![open.engine.id(), other.engine.id()];
+        outsiders.sort();
+        assert_eq!(flagged(&inside), outsiders);
+        let mut reported = Vec::new();
+        while reported.len() < 2 {
+            let EngineEvent::WrongPassphrase(id) =
+                wait_for(&b.events, |e| matches!(e, EngineEvent::WrongPassphrase(_)))
+            else {
+                unreachable!("waited for a wrong passphrase");
+            };
+            reported.push(id);
+        }
+        reported.sort();
+        assert_eq!(reported, outsiders);
+        let from_outside = flagged(&other.engine.snapshot());
+        assert!(from_outside.contains(&a.engine.id()));
+        assert!(from_outside.contains(&open.engine.id()));
     }
 
     #[test]

@@ -359,6 +359,10 @@ pub fn describe(event: &EngineEvent, snapshot: &EngineSnapshot) -> String {
         EngineEvent::PeerLeft(id) => format!("👋 {} left", label(snapshot, *id)),
         EngineEvent::TalkStarted(id) => format!("🗣️ {} is talking", label(snapshot, *id)),
         EngineEvent::TalkStopped(id) => format!("🤐 {} stopped", label(snapshot, *id)),
+        EngineEvent::WrongPassphrase(id) => format!(
+            "🔐 {} is on this channel with another passphrase, you can't hear each other",
+            label(snapshot, *id)
+        ),
         EngineEvent::DeviceStarted {
             direction,
             description,
@@ -614,6 +618,14 @@ fn peer_line(peer: &PeerInfo, mine: ChannelId, now: Instant) -> Line<'static> {
             ago(now.saturating_duration_since(peer.last_seen)),
             Style::default().fg(Color::Gray),
         ),
+        Span::styled(
+            if peer.mismatch {
+                "  🔐 other passphrase"
+            } else {
+                ""
+            },
+            Style::default().fg(Color::Red),
+        ),
     ])
 }
 
@@ -705,6 +717,7 @@ mod tests {
             addr: SocketAddr::from(([192, 168, 1, 5], 40_000)),
             talking: false,
             last_seen: Instant::now(),
+            mismatch: false,
         }
     }
 
@@ -895,6 +908,25 @@ mod tests {
         assert_eq!(
             channel_state(false, &many).0,
             "🟡 BUSY: Attic and 2 more are talking"
+        );
+    }
+
+    #[test]
+    fn a_wrong_passphrase_is_marked_and_explained() {
+        let mine = ChannelId::try_from(2).unwrap();
+        let now = Instant::now();
+        let mut stranger = peer(5, "Garage", 2, false);
+        stranger.mismatch = true;
+        let line = peer_line(&stranger, mine, now).to_string();
+        assert!(line.ends_with("🔐 other passphrase"), "{line}");
+        let fine = peer_line(&peer(6, "Attic", 2, false), mine, now).to_string();
+        assert!(!fine.contains("passphrase"));
+        assert_eq!(
+            describe(
+                &EngineEvent::WrongPassphrase(stranger.id),
+                &snapshot(vec![stranger])
+            ),
+            "🔐 Garage is on this channel with another passphrase, you can't hear each other"
         );
     }
 
