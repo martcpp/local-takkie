@@ -3,14 +3,9 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
-    Frame, Terminal,
-    backend::{Backend, CrosstermBackend},
+    DefaultTerminal, Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -71,26 +66,17 @@ impl App {
     }
 }
 
+/// Takes over the terminal until the user quits. The terminal is put back
+/// even if something panics.
 pub fn run(mut app: App, engine: &Engine, events: &Receiver<EngineEvent>) -> io::Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-
+    let mut terminal = ratatui::try_init()?;
     let result = run_app(&mut terminal, &mut app, engine, events);
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    ratatui::restore();
     result
 }
 
-fn run_app<B: Backend>(
-    terminal: &mut Terminal<B>,
+fn run_app(
+    terminal: &mut DefaultTerminal,
     app: &mut App,
     engine: &Engine,
     events: &Receiver<EngineEvent>,
