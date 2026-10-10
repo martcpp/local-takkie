@@ -791,6 +791,18 @@ with the wrong passphrase sees "wrong passphrase" and hears nothing.
 
 ---
 
+> **Order of work after M2 (decided 2026-10-10):** Android comes before the
+> rest of the desktop GUI, so a phone can be tested against the terminal app
+> as early as possible. After M2 (E10, all of E11, then E12):
+>
+> 1. **E13.1–E13.3 only:** the Tauri app, its commands and the main screen.
+>    The Android app is this same app with a mobile layout, so it can't be
+>    skipped.
+> 2. **M4, E15:** the Android app.
+> 3. Later: the rest of E13 (E13.4–E13.7), E14 desktop packaging and E16.
+>
+> The milestone and release numbers below keep their original order.
+
 ### M3 — Desktop GUI → `v0.4.0`
 
 **Goal:** a desktop app that non-technical users can install and use.
