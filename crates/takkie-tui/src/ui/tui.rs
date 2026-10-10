@@ -14,11 +14,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
 };
-use takkie_core::PeerId;
 use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
-use takkie_engine::{Engine, EngineEvent, EngineSnapshot};
+use takkie_core::{ChannelId, PeerId};
+use takkie_engine::{Engine, EngineEvent, EngineSnapshot, PeerInfo};
 
 use crate::settings::PttMode as PttChoice;
 
@@ -275,7 +275,7 @@ pub fn describe(event: &EngineEvent, snapshot: &EngineSnapshot) -> String {
 }
 
 fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
-    let chunks = Layout::default()
+    let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
@@ -283,94 +283,60 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
             Constraint::Length(3),
         ])
         .split(f.area());
-
-    render_header(f, chunks[0], app);
-
-    let main_chunks = Layout::default()
+    let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(chunks[1]);
-    let left_chunks = Layout::default()
+        .split(rows[1]);
+    let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(10),
-            Constraint::Length(8),
-            Constraint::Min(5),
-        ])
-        .split(main_chunks[0]);
+        .constraints([Constraint::Min(5), Constraint::Length(6)])
+        .split(columns[0]);
 
-    render_connection_status(f, left_chunks[0], app, snapshot);
-    render_ptt_status(f, left_chunks[1], app, snapshot);
-    render_peers(f, left_chunks[2], snapshot);
-    render_events(f, main_chunks[1], app);
-    render_footer(f, chunks[2], app.mode);
+    render_header(f, rows[0], app, snapshot);
+    render_peers(f, left[0], snapshot, Instant::now());
+    render_ptt_status(f, left[1], app, snapshot);
+    render_events(f, columns[1], app);
+    render_footer(f, rows[2], app.mode);
 }
 
-fn render_header(f: &mut Frame, area: Rect, app: &App) {
-    let title = Paragraph::new(format!(
-        "🎵 local-takkie - {} ({}:{})",
-        app.name, app.local_ip, app.port
-    ))
-    .style(
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )
+fn render_header(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot) {
+    let gray = Style::default().fg(Color::Gray);
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "🎵 local-takkie   ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            app.name.clone(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("   channel ", gray),
+        Span::styled(
+            snapshot.channel.to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("   port ", gray),
+        Span::styled(app.port.to_string(), Style::default().fg(Color::Yellow)),
+        Span::styled(format!("   {}", app.local_ip), gray),
+    ]))
     .alignment(Alignment::Center)
     .block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan)),
     );
-    f.render_widget(title, area);
-}
-
-fn render_connection_status(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot) {
-    let peers = snapshot.peers.len();
-    let row = |name: &'static str, value: String, color: Color| {
-        Line::from(vec![
-            Span::styled(name, Style::default().fg(Color::Gray)),
-            Span::styled(value, Style::default().fg(color)),
-        ])
-    };
-    let status_text = vec![
-        Line::from(vec![
-            Span::styled("Instance: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                app.name.as_str(),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        row("Local IP: ", app.local_ip.clone(), Color::Yellow),
-        row("Port: ", app.port.to_string(), Color::Yellow),
-        row("Channel: ", snapshot.channel.to_string(), Color::Yellow),
-        row(
-            "Connected Peers: ",
-            peers.to_string(),
-            if peers > 0 { Color::Green } else { Color::Red },
-        ),
-        row(
-            "Buffer: ",
-            format!("{} ms", snapshot.buffer_ms),
-            Color::Gray,
-        ),
-    ];
-    let paragraph = Paragraph::new(status_text)
-        .block(
-            Block::default()
-                .title("📡 Connection Status")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White)),
-        )
-        .wrap(Wrap { trim: true });
-    f.render_widget(paragraph, area);
+    f.render_widget(header, area);
 }
 
 fn render_ptt_status(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot) {
     let on = app.transmitting;
-    let status_chunks = Layout::default()
+    let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Length(3)])
         .split(area);
@@ -392,41 +358,88 @@ fn render_ptt_status(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnap
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if on { Color::Red } else { Color::White })),
     );
-    f.render_widget(ptt, status_chunks[0]);
+    f.render_widget(ptt, parts[0]);
 
     let percent = (snapshot.mic.peak.clamp(0.0, 1.0) * 100.0).round() as u16;
     let gauge = Gauge::default()
-        .block(Block::default().title("🔊 Mic Level").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(format!("🔊 Mic level · buffer {} ms", snapshot.buffer_ms))
+                .borders(Borders::ALL),
+        )
         .gauge_style(Style::default().fg(if on { Color::Green } else { Color::Gray }))
         .percent(percent);
-    f.render_widget(gauge, status_chunks[1]);
+    f.render_widget(gauge, parts[1]);
 }
 
-fn render_peers(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot) {
-    let items: Vec<ListItem> = snapshot
+/// How long ago, as a peer list shows it.
+fn ago(elapsed: Duration) -> String {
+    match elapsed.as_secs() {
+        0 => "now".to_owned(),
+        seconds @ 1..=59 => format!("{seconds} s ago"),
+        seconds => format!("{} min ago", seconds / 60),
+    }
+}
+
+/// Our channel first, then by name, nameless ones last.
+fn ordered(peers: &[PeerInfo], mine: ChannelId) -> Vec<&PeerInfo> {
+    let mut peers: Vec<&PeerInfo> = peers.iter().collect();
+    peers.sort_by_key(|peer| {
+        (
+            peer.channel != mine,
+            peer.name.is_empty(),
+            peer.name.to_lowercase(),
+            peer.id,
+        )
+    });
+    peers
+}
+
+fn peer_line(peer: &PeerInfo, mine: ChannelId, now: Instant) -> Line<'static> {
+    let here = peer.channel == mine;
+    let text = Style::default().fg(if here { Color::White } else { Color::DarkGray });
+    let (dot, dot_style) = if peer.talking {
+        (
+            "●",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        ("○", Style::default().fg(Color::DarkGray))
+    };
+    let name = if peer.name.is_empty() {
+        peer.id.to_string()
+    } else {
+        peer.name.clone()
+    };
+    Line::from(vec![
+        Span::styled(format!("{dot} "), dot_style),
+        Span::styled(format!("{name:<20}"), text),
+        Span::styled(format!(" ch {:<3}", peer.channel.get()), text),
+        Span::styled(
+            ago(now.saturating_duration_since(peer.last_seen)),
+            Style::default().fg(Color::Gray),
+        ),
+    ])
+}
+
+fn render_peers(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot, now: Instant) {
+    let here = snapshot
         .peers
         .iter()
-        .enumerate()
-        .map(|(i, peer)| {
-            let name = if peer.name.is_empty() {
-                peer.id.to_string()
-            } else {
-                peer.name.clone()
-            };
-            let talking = if peer.talking { " 🗣️" } else { "" };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{}. ", i + 1), Style::default().fg(Color::Gray)),
-                Span::styled(
-                    format!("📱 {name} (ch {}){talking}", peer.channel),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::styled(format!("  {}", peer.addr), Style::default().fg(Color::Gray)),
-            ]))
-        })
+        .filter(|peer| peer.channel == snapshot.channel)
+        .count();
+    let items: Vec<ListItem> = ordered(&snapshot.peers, snapshot.channel)
+        .into_iter()
+        .map(|peer| ListItem::new(peer_line(peer, snapshot.channel, now)))
         .collect();
     let list = List::new(items).block(
         Block::default()
-            .title(format!("👥 Connected Peers ({})", snapshot.peers.len()))
+            .title(format!(
+                "👥 Peers ({here} on your channel, {} in all)",
+                snapshot.peers.len()
+            ))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White)),
     );
@@ -479,7 +492,59 @@ mod tests {
             channel: ChannelId::try_from(2).unwrap(),
             addr: SocketAddr::from(([192, 168, 1, 5], 40_000)),
             talking: false,
+            last_seen: Instant::now(),
         }
+    }
+
+    fn peer(id: u64, name: &str, channel: u8, talking: bool) -> PeerInfo {
+        PeerInfo {
+            id: PeerId::new(id),
+            name: name.into(),
+            channel: ChannelId::try_from(channel).unwrap(),
+            talking,
+            ..kitchen()
+        }
+    }
+
+    #[test]
+    fn last_heard_reads_naturally() {
+        assert_eq!(ago(Duration::from_millis(400)), "now");
+        assert_eq!(ago(Duration::from_secs(7)), "7 s ago");
+        assert_eq!(ago(Duration::from_secs(59)), "59 s ago");
+        assert_eq!(ago(Duration::from_secs(150)), "2 min ago");
+    }
+
+    #[test]
+    fn our_channel_comes_first_then_names() {
+        let mine = ChannelId::try_from(2).unwrap();
+        let peers = [
+            peer(1, "zed", 2, false),
+            peer(2, "Amy", 5, false),
+            peer(4, "", 2, false),
+            peer(3, "bob", 2, false),
+        ];
+        let names: Vec<&str> = ordered(&peers, mine)
+            .iter()
+            .map(|peer| peer.name.as_str())
+            .collect();
+        assert_eq!(names, ["bob", "zed", "", "Amy"]);
+    }
+
+    #[test]
+    fn a_peer_line_shows_talking_name_channel_and_last_heard() {
+        let mine = ChannelId::try_from(2).unwrap();
+        let now = Instant::now();
+        let mut talking = peer(1, "Kitchen", 2, true);
+        talking.last_seen = now - Duration::from_secs(3);
+        let line = peer_line(&talking, mine, now).to_string();
+        assert!(line.starts_with("● Kitchen"), "{line}");
+        assert!(line.contains("ch 2"), "{line}");
+        assert!(line.ends_with("3 s ago"), "{line}");
+        let quiet = peer_line(&peer(9, "", 5, false), mine, now).to_string();
+        assert!(
+            quiet.starts_with(&format!("○ {}", PeerId::new(9))),
+            "{quiet}"
+        );
     }
 
     fn snapshot(peers: Vec<PeerInfo>) -> EngineSnapshot {
