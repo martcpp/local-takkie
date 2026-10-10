@@ -14,6 +14,7 @@ crossbeam-channel = "0.5.17"
 takkie-core = { path = "crates/takkie-core" }
 thiserror = "2"
 tracing = "0.1"
+zeroize = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 use clap::Parser;
+use takkie_core::Passphrase;
 use takkie_engine::net::address::local_networks;
 use takkie_engine::{DeviceInfo, Engine, EngineConfig};
 
@@ -57,11 +58,16 @@ fn main() -> ExitCode {
     let mut current = cli.apply(saved.clone().unwrap_or_default());
     let name = current.name.clone().unwrap_or_else(computer_name);
 
+    // Never a command-line argument: that would end up in shell history.
+    let passphrase = env::var("TAKKIE_PASSPHRASE")
+        .ok()
+        .and_then(|secret| Passphrase::new(secret).ok());
+
     let (engine, events) = match Engine::start(EngineConfig {
         display_name: name.clone(),
         port: cli.port,
         channel: current.channel(),
-        passphrase: None,
+        passphrase: passphrase.clone(),
         input_device: current.input_device.clone(),
         output_device: current.output_device.clone(),
         static_peers: cli.peers.clone(),
@@ -79,6 +85,9 @@ fn main() -> ExitCode {
         .map_or_else(|| "unknown".to_owned(), |net| net.ip.to_string());
 
     let mut app = ui::tui::App::new(name, local_ip, engine.port(), current.ptt_mode);
+    if let Some(passphrase) = passphrase {
+        app.remember(current.channel(), passphrase);
+    }
     let panel = match &logs {
         Some(logs) => {
             match (&logs.dir, &logs.problem) {

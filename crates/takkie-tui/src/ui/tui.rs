@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 use ratatui::crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::supports_keyboard_enhancement;
@@ -17,10 +17,11 @@ use ratatui::{
     widgets::{Block, Borders, Clear, LineGauge, List, ListItem, Paragraph},
 };
 use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
-use takkie_core::{ChannelId, PeerId};
+use takkie_core::{ChannelId, Passphrase, PeerId};
 use takkie_engine::{Direction as Device, Engine, EngineEvent, EngineSnapshot, PeerInfo};
 
 use crate::settings::PttMode as PttChoice;
+use zeroize::Zeroizing;
 
 const MAX_EVENTS: usize = 100;
 // Longer than the OS key-repeat delay, or a held key flickers off before
@@ -63,13 +64,14 @@ impl KeyReleases {
 }
 
 /// Every key the app answers to, as the help popup lists them.
-const BINDINGS: [(&str, &str); 8] = [
+const BINDINGS: [(&str, &str); 9] = [
     ("SPACE", "talk (hold or toggle, see the footer)"),
     ("T", "switch between hold and toggle"),
     ("M", "mute or unmute what you hear"),
     ("+ / -", "volume up or down"),
     ("D", "show the microphone and speaker in use"),
     ("1-9, 0", "switch to channel 1 to 10"),
+    ("P", "set or clear this channel's passphrase"),
     ("?", "this help"),
     ("Q / Esc", "quit"),
 ];
@@ -84,6 +86,57 @@ enum Key {
     Volume(i8),
     Devices,
     Channel(ChannelId),
+    Passphrase,
+}
+
+const MAX_SECRET: usize = 128;
+const SHORT_SECRET: usize = 12;
+
+#[derive(Debug, PartialEq, Eq)]
+enum Typed {
+    More,
+    Done,
+    Cancelled,
+}
+
+/// A passphrase being typed: masked on screen and wiped when dropped.
+struct SecretInput {
+    text: Zeroizing<String>,
+}
+
+impl SecretInput {
+    fn new() -> Self {
+        // Room for the longest entry up front, so growing never leaves a copy behind.
+        Self {
+            text: Zeroizing::new(String::with_capacity(MAX_SECRET * 4)),
+        }
+    }
+
+    fn key(&mut self, code: KeyCode) -> Typed {
+        match code {
+            KeyCode::Enter => return Typed::Done,
+            KeyCode::Esc => return Typed::Cancelled,
+            KeyCode::Backspace => {
+                self.text.pop();
+            }
+            KeyCode::Char(c) if self.len() < MAX_SECRET => self.text.push(c),
+            _ => {}
+        }
+        Typed::More
+    }
+
+    fn len(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    fn masked(&self) -> String {
+        "•".repeat(self.len())
+    }
+
+    /// The passphrase, or `None` for an empty entry.
+    fn finish(mut self) -> Option<Passphrase> {
+        Passphrase::new(std::mem::take(&mut *self.text)).ok()
+    }
 }
 
 fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
@@ -99,6 +152,7 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         (KeyCode::Char('+' | '='), _) => Some(Key::Volume(1)),
         (KeyCode::Char('-' | '_'), _) => Some(Key::Volume(-1)),
         (KeyCode::Char('d' | 'D'), _) => Some(Key::Devices),
+        (KeyCode::Char('p' | 'P'), _) => Some(Key::Passphrase),
         (KeyCode::Char(digit @ '0'..='9'), _) => {
             let number = match digit {
                 '0' => 10,
@@ -179,6 +233,9 @@ pub struct App {
     help: bool,
     mic: Option<String>,
     speaker: Option<String>,
+    input: Option<SecretInput>,
+    // This session's passphrases, by channel. Never written anywhere.
+    secrets: HashMap<ChannelId, Passphrase>,
 }
 
 impl App {
@@ -195,7 +252,14 @@ impl App {
             help: false,
             mic: None,
             speaker: None,
+            input: None,
+            secrets: HashMap::new(),
         }
+    }
+
+    /// Keeps `passphrase` for `channel`, so switching back re-applies it.
+    pub fn remember(&mut self, channel: ChannelId, passphrase: Passphrase) {
+        self.secrets.insert(channel, passphrase);
     }
 
     fn remember_device(&mut self, event: &EngineEvent) {
@@ -278,6 +342,10 @@ fn run_app(
         if event::poll(tick_rate)?
             && let Event::Key(key) = event::read()?
         {
+            if app.input.is_some() {
+                typing(app, engine, snapshot.channel, key);
+                continue;
+            }
             match key_action(key.code, key.kind) {
                 Some(Key::Space(input)) => feed(app, engine, input),
                 _ if app.help => {
@@ -312,13 +380,53 @@ fn run_app(
                 }
                 Some(Key::Channel(channel)) if channel != snapshot.channel => {
                     set_talking(app, engine, false);
-                    engine.set_channel(channel, None);
-                    app.log.push(format!("📻 Channel {channel}"));
+                    let secret = app.secrets.get(&channel).cloned();
+                    app.log.push(format!(
+                        "📻 Channel {channel}{}",
+                        if secret.is_some() { " (private)" } else { "" }
+                    ));
+                    engine.set_channel(channel, secret);
+                }
+                Some(Key::Passphrase) => {
+                    set_talking(app, engine, false);
+                    app.input = Some(SecretInput::new());
                 }
                 Some(Key::Channel(_)) | None => {}
             }
         }
         feed(app, engine, PttInput::Tick);
+    }
+}
+
+fn typing(app: &mut App, engine: &Engine, channel: ChannelId, key: KeyEvent) {
+    if key.kind == KeyEventKind::Release {
+        return;
+    }
+    let Some(input) = &mut app.input else {
+        return;
+    };
+    match input.key(key.code) {
+        Typed::More => {}
+        Typed::Cancelled => app.input = None,
+        Typed::Done => {
+            let passphrase = app.input.take().and_then(SecretInput::finish);
+            match &passphrase {
+                Some(secret) => {
+                    if secret.expose_secret().chars().count() < SHORT_SECRET {
+                        app.log.push(
+                            "⚠️ That passphrase is short and easy to guess, a few words are safer",
+                        );
+                    }
+                    app.secrets.insert(channel, secret.clone());
+                    app.log.push(format!("🔒 Channel {channel} is now private"));
+                }
+                None => {
+                    app.secrets.remove(&channel);
+                    app.log.push(format!("🔓 Channel {channel} is now open"));
+                }
+            }
+            engine.set_channel(channel, passphrase);
+        }
     }
 }
 
@@ -404,6 +512,41 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
     if app.help {
         render_help(f, f.area());
     }
+    if let Some(input) = &app.input {
+        render_secret(f, f.area(), input, snapshot.channel);
+    }
+}
+
+fn render_secret(f: &mut Frame, screen: Rect, input: &SecretInput, channel: ChannelId) {
+    let width = 64.min(screen.width);
+    let height = 5.min(screen.height);
+    let area = Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    );
+    let lines = vec![
+        Line::from(Span::styled(
+            format!(" {}", input.masked()),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            " Enter sets it · empty makes the channel open · Esc cancels",
+            Style::default().fg(Color::Gray),
+        )),
+    ];
+    f.render_widget(Clear, area);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(format!("🔒 Passphrase for channel {channel} (hidden)"))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        ),
+        area,
+    );
 }
 
 fn render_help(f: &mut Frame, screen: Rect) {
@@ -456,7 +599,14 @@ fn render_header(f: &mut Frame, area: Rect, app: &App, snapshot: &EngineSnapshot
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("   channel ", gray),
+        Span::styled(
+            if snapshot.private {
+                "   🔒 channel "
+            } else {
+                "   channel "
+            },
+            gray,
+        ),
         Span::styled(
             snapshot.channel.to_string(),
             Style::default()
@@ -741,6 +891,7 @@ mod tests {
         assert_eq!(press('='), Some(Key::Volume(1)));
         assert_eq!(press('-'), Some(Key::Volume(-1)));
         assert_eq!(press('D'), Some(Key::Devices));
+        assert_eq!(press('p'), Some(Key::Passphrase));
         let channel = |n| Some(Key::Channel(ChannelId::try_from(n).unwrap()));
         assert_eq!(press('1'), channel(1));
         assert_eq!(press('9'), channel(9));
@@ -928,6 +1079,53 @@ mod tests {
             ),
             "🔐 Garage is on this channel with another passphrase, you can't hear each other"
         );
+    }
+
+    fn typed(text: &str) -> SecretInput {
+        let mut input = SecretInput::new();
+        for c in text.chars() {
+            assert_eq!(input.key(KeyCode::Char(c)), Typed::More);
+        }
+        input
+    }
+
+    #[test]
+    fn a_typed_passphrase_is_masked_edited_and_handed_over() {
+        let mut input = typed("hunter2");
+        assert_eq!(input.masked(), "•••••••");
+        input.key(KeyCode::Backspace);
+        assert_eq!(input.masked(), "••••••");
+        assert_eq!(input.key(KeyCode::Enter), Typed::Done);
+        assert_eq!(input.finish().unwrap().expose_secret(), "hunter");
+        assert_eq!(SecretInput::new().key(KeyCode::Esc), Typed::Cancelled);
+        assert!(SecretInput::new().finish().is_none());
+    }
+
+    #[test]
+    fn a_passphrase_stops_at_its_limit_without_growing_the_buffer() {
+        let input = typed(&"é".repeat(MAX_SECRET + 20));
+        assert_eq!(input.len(), MAX_SECRET);
+        assert!(input.text.capacity() >= MAX_SECRET * 4);
+        assert_eq!(input.text.len(), MAX_SECRET * 2);
+    }
+
+    #[test]
+    fn the_passphrase_popup_never_shows_what_was_typed() {
+        let mut app = app();
+        app.input = Some(typed("correct horse"));
+        let shown = screen(&app, &snapshot(Vec::new()));
+        assert!(shown.contains("•••••••••••••"));
+        assert!(!shown.contains("correct"));
+        assert!(!shown.contains("horse"));
+        insta::assert_snapshot!(shown);
+    }
+
+    #[test]
+    fn a_private_channel_shows_a_lock_in_the_header() {
+        let mut state = snapshot(Vec::new());
+        assert!(!screen(&app(), &state).contains("🔒"));
+        state.private = true;
+        assert!(screen(&app(), &state).contains("🔒"));
     }
 
     #[test]

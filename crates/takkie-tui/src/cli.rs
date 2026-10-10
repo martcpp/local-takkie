@@ -12,6 +12,10 @@ use crate::settings::{PttMode, Settings};
 ///
 /// Flags override the settings file for this run. The name, channel, devices
 /// and PTT mode you ran with are remembered when you quit.
+///
+/// To start on a private channel, set the TAKKIE_PASSPHRASE environment
+/// variable, or press P in the app. There is no flag for it on purpose: it
+/// would end up in your shell history.
 #[derive(Debug, Parser)]
 #[command(name = "takkie", version)]
 pub struct Cli {
