@@ -10,11 +10,12 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwap;
 use crossbeam_channel::Receiver;
 
-use takkie_core::dsp::{Level, apply_gain, mix_into, soft_limit};
-use takkie_core::jitter::{JitterBuffer, Playout};
+use takkie_core::dsp::{Level, Tone, apply_gain, mix_into, soft_limit};
+use takkie_core::jitter::{Insert, JitterBuffer, Playout};
 use takkie_core::{PeerId, Seq};
 
 use super::codec::{CodecError, VoiceDecoder};
+use super::config::PREFERRED_RATE;
 use super::io::AudioSink;
 use super::resample::{FRAME, ResampleError, Resampler};
 use super::tx::LevelMeter;
@@ -47,7 +48,25 @@ struct Talker {
     decoder: VoiceDecoder,
     concealed: u32,
     talking: bool,
+    end: Option<Seq>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cue {
+    Start,
+    End,
+}
+
+impl Cue {
+    fn tone(self) -> Tone {
+        match self {
+            Self::Start => Tone::new(1_500.0, 60, PREFERRED_RATE),
+            Self::End => Tone::new(1_000.0, 120, PREFERRED_RATE),
+        }
+    }
+}
+
+const BEEP_LEVEL: f32 = 0.2;
 
 /// After 100 ms of guessing, silence sounds better than a drone.
 const MAX_CONCEALED: u32 = 5;
@@ -71,6 +90,7 @@ pub struct MixControls {
     volume: AtomicU32,
     muted: AtomicBool,
     half_duplex: AtomicBool,
+    beeps: AtomicBool,
     muted_peers: ArcSwap<Vec<PeerId>>,
 }
 
@@ -80,6 +100,7 @@ impl Default for MixControls {
             volume: AtomicU32::new(1.0_f32.to_bits()),
             muted: AtomicBool::new(false),
             half_duplex: AtomicBool::new(true),
+            beeps: AtomicBool::new(false),
             muted_peers: ArcSwap::default(),
         }
     }
@@ -125,6 +146,18 @@ impl MixControls {
         self.half_duplex.load(Relaxed)
     }
 
+    /// Turns the beeps on or off: one when someone finishes talking, one
+    /// when we start. They are made here, not sent.
+    pub fn set_beeps(&self, on: bool) {
+        self.beeps.store(on, Relaxed);
+    }
+
+    /// Whether the beeps are on.
+    #[must_use]
+    pub fn beeps(&self) -> bool {
+        self.beeps.load(Relaxed)
+    }
+
     /// Leaves one sender out of the mix, or puts them back.
     pub fn set_peer_muted(&self, peer: PeerId, muted: bool) {
         self.muted_peers.rcu(|peers| {
@@ -166,6 +199,8 @@ pub struct Mixer {
     controls: Arc<MixControls>,
     transmitting: Arc<AtomicBool>,
     level: Arc<LevelMeter>,
+    beep: Option<(Tone, Cue)>,
+    was_transmitting: bool,
 }
 
 impl Mixer {
@@ -194,6 +229,8 @@ impl Mixer {
             controls: shared.controls,
             transmitting: shared.transmitting,
             level: shared.level,
+            beep: None,
+            was_transmitting: false,
         }
     }
 
@@ -235,10 +272,14 @@ impl Mixer {
                 decoder: VoiceDecoder::new()?,
                 concealed: 0,
                 talking: false,
+                end: None,
             }),
         };
         if packet.end {
-            talker.jitter.insert_end(packet.seq, packet.payload, now);
+            let stored = talker.jitter.insert_end(packet.seq, packet.payload, now);
+            if matches!(stored, Insert::Stored | Insert::Restarted) {
+                talker.end = Some(packet.seq);
+            }
         } else {
             talker.jitter.insert(packet.seq, packet.payload, now);
         }
@@ -268,12 +309,13 @@ impl Mixer {
 
     /// Mixes the next 20 ms from every sender into `out`, covering lost
     /// frames with FEC when the next packet is here and concealment if not,
-    /// then applies volume, the limiter, mute and half-duplex.
+    /// then applies volume, mute, half-duplex, the beeps and the limiter.
     pub fn tick(&mut self, now: Instant, out: &mut [f32]) {
         out.fill(0.0);
         let frame = &mut self.frame;
         let counters = &self.counters;
         let muted_peers = self.controls.muted_peers.load();
+        let mut ended = false;
         for (
             id,
             Talker {
@@ -281,45 +323,73 @@ impl Mixer {
                 decoder,
                 concealed,
                 talking,
+                end,
             },
         ) in &mut self.talkers
         {
-            let played = match jitter.pop_next(now) {
+            let (seq, played) = match jitter.pop_next(now) {
                 Playout::NotReady => {
                     *talking = false;
                     continue;
                 }
-                Playout::Packet { payload, .. } => {
+                Playout::Packet { seq, payload } => {
                     let decoded = matches!(decoder.decode(&payload, frame), Ok(FRAME));
                     if decoded {
                         *concealed = 0;
                         *talking = true;
                     }
-                    decoded || conceal(decoder, concealed, frame, counters)
+                    (seq, decoded || conceal(decoder, concealed, frame, counters))
                 }
-                Playout::Fec { next, .. } => {
+                Playout::Fec { seq, next } => {
                     let rebuilt = matches!(decoder.decode_fec(next, frame), Ok(FRAME));
                     if rebuilt {
                         counters.recovered.fetch_add(1, Relaxed);
                         *concealed = 0;
                         *talking = true;
                     }
-                    rebuilt || conceal(decoder, concealed, frame, counters)
+                    (seq, rebuilt || conceal(decoder, concealed, frame, counters))
                 }
-                Playout::Plc { .. } => conceal(decoder, concealed, frame, counters),
+                Playout::Plc { seq } => (seq, conceal(decoder, concealed, frame, counters)),
             };
+            let audible = !muted_peers.contains(id);
             if !played {
                 *talking = false;
-            } else if !muted_peers.contains(id) {
+            } else if audible {
                 mix_into(out, frame);
             }
+            if *end == Some(seq) {
+                *end = None;
+                ended |= audible;
+            }
         }
-        apply_gain(out, self.controls.volume());
-        soft_limit(out);
-        let talking_over = self.controls.is_half_duplex() && self.transmitting.load(Relaxed);
-        if self.controls.is_muted() || talking_over {
+        let volume = self.controls.volume();
+        let muted = self.controls.is_muted();
+        let transmitting = self.transmitting.load(Relaxed);
+        let talking_over = self.controls.is_half_duplex() && transmitting;
+        apply_gain(out, volume);
+        if muted || talking_over {
             out.fill(0.0);
         }
+        let over = self.beep.as_mut().is_some_and(|(tone, cue)| {
+            let heard = !muted && (*cue == Cue::Start || !talking_over);
+            tone.mix_into(out, if heard { BEEP_LEVEL * volume } else { 0.0 });
+            tone.is_done()
+        });
+        if over {
+            self.beep = None;
+        }
+        soft_limit(out);
+
+        // Armed after mixing, so a beep starts on the frame after its cause.
+        if self.controls.beeps() {
+            if ended {
+                self.beep = Some((Cue::End.tone(), Cue::End));
+            }
+            if transmitting && !self.was_transmitting {
+                self.beep = Some((Cue::Start.tone(), Cue::Start));
+            }
+        }
+        self.was_transmitting = transmitting;
         self.level.set(Level::of(out));
     }
 }
@@ -852,6 +922,89 @@ mod tests {
         controls.set_peer_muted(kitchen, false);
         assert!(!controls.is_peer_muted(kitchen));
         assert!(controls.is_peer_muted(attic));
+    }
+
+    fn crossings(frame: &[f32]) -> usize {
+        frame
+            .windows(2)
+            .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+            .count()
+    }
+
+    fn after_a_press(mixer: &mut Mixer) -> Vec<Vec<f32>> {
+        let spoken = chorus(mixer, 1, 10, true).len();
+        let t0 = Instant::now() + Duration::from_millis(20 * spoken as u64 + 60);
+        let mut out = vec![0.0; FRAME];
+        (0..10)
+            .map(|tick| {
+                mixer.tick(t0 + Duration::from_millis(20 * tick), &mut out);
+                out.clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_beep_follows_the_end_of_a_transmission() {
+        let mut mixer = Mixer::new();
+        mixer.controls().set_beeps(true);
+        let tail = after_a_press(&mut mixer);
+        assert!(
+            tail[..6].iter().all(|frame| rms(frame) > 0.05),
+            "the beep lasts six frames"
+        );
+        assert!(
+            (38..=42).contains(&crossings(&tail[2])),
+            "the beep is 1 kHz"
+        );
+        assert!(tail[6..].iter().all(|frame| rms(frame) == 0.0));
+        assert!(mixer.controls().beeps());
+    }
+
+    #[test]
+    fn no_beep_unless_asked_for_or_when_muted() {
+        let mut off = Mixer::new();
+        assert!(after_a_press(&mut off).iter().all(|f| rms(f) == 0.0));
+
+        let mut muted = Mixer::new();
+        muted.controls().set_beeps(true);
+        muted.controls().set_muted(true);
+        assert!(after_a_press(&mut muted).iter().all(|f| rms(f) == 0.0));
+
+        let mut peer_muted = Mixer::new();
+        peer_muted.controls().set_beeps(true);
+        peer_muted.controls().set_peer_muted(PeerId::new(1), true);
+        assert!(after_a_press(&mut peer_muted).iter().all(|f| rms(f) == 0.0));
+    }
+
+    #[test]
+    fn the_beep_follows_the_volume() {
+        let mut full = Mixer::new();
+        full.controls().set_beeps(true);
+        let loud = rms(&after_a_press(&mut full)[2]);
+        let mut half = Mixer::new();
+        half.controls().set_beeps(true);
+        half.controls().set_volume(0.5);
+        let quiet = rms(&after_a_press(&mut half)[2]);
+        assert!((quiet / loud - 0.5).abs() < 0.01, "{quiet} vs {loud}");
+    }
+
+    #[test]
+    fn pressing_to_talk_beeps_even_in_half_duplex() {
+        let transmitting = Arc::new(AtomicBool::new(false));
+        let mut mixer = Mixer::with_transmitting(Arc::clone(&transmitting));
+        mixer.controls().set_beeps(true);
+        let t0 = Instant::now();
+        let mut out = vec![0.0; FRAME];
+        let mut frames = Vec::new();
+        for tick in 0..8 {
+            transmitting.store(tick >= 1, Relaxed);
+            mixer.tick(t0 + Duration::from_millis(20 * tick), &mut out);
+            frames.push(out.clone());
+        }
+        assert!(frames[..2].iter().all(|frame| rms(frame) == 0.0));
+        assert!(frames[2..5].iter().all(|frame| rms(frame) > 0.05));
+        assert!((58..=62).contains(&crossings(&frames[3])));
+        assert!(frames[5..].iter().all(|frame| rms(frame) == 0.0));
     }
 
     #[test]
