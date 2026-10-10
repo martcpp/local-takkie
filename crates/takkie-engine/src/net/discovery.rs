@@ -121,7 +121,20 @@ fn txt(service: &ResolvedService) -> HashMap<String, String> {
 pub struct Discovery {
     daemon: ServiceDaemon,
     fullname: String,
-    id: PeerId,
+    announcement: Announcement,
+}
+
+fn service_info(announcement: &Announcement) -> Result<ServiceInfo, DiscoveryError> {
+    let label = host_label(&announcement.name, announcement.id);
+    let info = ServiceInfo::new(
+        SERVICE,
+        &label,
+        &format!("{label}.local."),
+        "",
+        announcement.port,
+        properties(announcement),
+    )?;
+    Ok(info.enable_addr_auto())
 }
 
 impl Discovery {
@@ -134,23 +147,38 @@ impl Discovery {
         let daemon = ServiceDaemon::new()?;
         // Our transport is IPv4, and a loopback address is no use to peers.
         daemon.disable_interface(vec![IfKind::IPv6, IfKind::LoopbackV4])?;
-        let label = host_label(&announcement.name, announcement.id);
-        let info = ServiceInfo::new(
-            SERVICE,
-            &label,
-            &format!("{label}.local."),
-            "",
-            announcement.port,
-            properties(announcement),
-        )?
-        .enable_addr_auto();
+        let info = service_info(announcement)?;
         let fullname = info.get_fullname().to_string();
         daemon.register(info)?;
         Ok(Self {
             daemon,
             fullname,
-            id: announcement.id,
+            announcement: announcement.clone(),
         })
+    }
+
+    /// Announces a new channel, so peers see it in our TXT record.
+    ///
+    /// # Errors
+    /// [`DiscoveryError`] if the daemon refuses the updated record.
+    pub fn set_channel(&mut self, channel: ChannelId) -> Result<(), DiscoveryError> {
+        if self.announcement.channel == channel {
+            return Ok(());
+        }
+        let updated = Announcement {
+            channel,
+            ..self.announcement.clone()
+        };
+        // Registering the same name again replaces the record and re-announces it.
+        self.daemon.register(service_info(&updated)?)?;
+        self.announcement = updated;
+        Ok(())
+    }
+
+    /// The channel we announce.
+    #[must_use]
+    pub fn channel(&self) -> ChannelId {
+        self.announcement.channel
     }
 
     /// Our full service name.
@@ -162,7 +190,7 @@ impl Discovery {
     /// The id we announced.
     #[must_use]
     pub fn id(&self) -> PeerId {
-        self.id
+        self.announcement.id
     }
 
     /// The daemon, for browsing.
@@ -388,6 +416,20 @@ mod tests {
             unreachable!("the rest of the record is fine");
         };
         assert_eq!(name.chars().count(), MAX_NAME);
+    }
+
+    #[test]
+    fn the_service_record_carries_the_channel_and_keeps_its_name() {
+        let on_four = service_info(&kitchen()).unwrap();
+        let on_nine = service_info(&Announcement {
+            channel: ChannelId::try_from(9).unwrap(),
+            ..kitchen()
+        })
+        .unwrap();
+        assert_eq!(on_four.get_property_val_str("ch"), Some("4"));
+        assert_eq!(on_nine.get_property_val_str("ch"), Some("9"));
+        assert_eq!(on_four.get_fullname(), on_nine.get_fullname());
+        assert_eq!(on_nine.get_port(), 40_000);
     }
 
     #[test]

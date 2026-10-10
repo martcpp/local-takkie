@@ -529,6 +529,11 @@ impl<O: DeviceOpener> Control<O> {
                     Ok(Command::SetChannel(channel)) => {
                         tracing::info!(%channel, "channel changed");
                         self.shared.channel.store(channel.get(), Relaxed);
+                        if let Some((_, discovery)) = &mut self.mdns
+                            && let Err(error) = discovery.set_channel(channel)
+                        {
+                            tracing::warn!("couldn't announce channel {channel}: {error}");
+                        }
                     }
                     Err(_) => break,
                 },
