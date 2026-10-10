@@ -21,7 +21,7 @@ ratatui = "0.30"
 serde = { workspace = true }
 takkie-core = { workspace = true }
 takkie-engine = { workspace = true }
-toml = "0.9"
+toml = "1.1"
 tracing = { workspace = true }
 tracing-appender = "0.2"
 tracing-subscriber = { workspace = true }
