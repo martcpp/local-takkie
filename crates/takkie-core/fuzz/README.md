@@ -26,8 +26,11 @@ That runs for 10 minutes, starting from the hand-made inputs in
 committed). On Windows add `--sanitizer none` if AddressSanitizer isn't
 available.
 
-The target checks that decoding never panics, and that anything which decodes
-encodes back to the same bytes. A crash is saved under `fuzz/artifacts`;
+`decode_header` checks that decoding never panics, and that anything which
+decodes encodes back to the same bytes. `open_packet` does the same for
+sealed packets (E11): opening never panics, and anything that opens seals
+back to the same bytes. Run it the same way with `open_packet` in place of
+`decode_header`. A crash is saved under `fuzz/artifacts`;
 replay it with:
 
 ```bash
