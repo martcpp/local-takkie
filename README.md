@@ -56,12 +56,21 @@ green dot while they talk. Press `?` in the app for the list of keys:
 | `M` | Mute or unmute what you hear |
 | `+` / `-` | Volume up or down |
 | `D` | Show the microphone and speaker in use |
+| `1`–`9`, `0` | Switch to channel 1 to 10 |
+| `P` | Set or clear this channel's passphrase |
 | `?` | Help |
 | `Q` / `Esc` | Quit |
 
 Your name, channel and devices are kept in a settings file, and the app shows
 where it is when it starts. Everyone on the same channel hears each other;
-choose one with `--channel 1` to `--channel 10`.
+choose one with the digit keys or `--channel`.
+
+**Private channels.** A channel is open by default: anyone on the same
+network can listen and talk. Press `P` and type a passphrase to make it
+private; everyone who should hear you sets the same passphrase on the same
+channel, and a 🔒 shows in the header. People without it hear nothing and
+can't talk into it. The passphrase is never saved to disk. What this does and
+doesn't protect is in [docs/security.md](docs/security.md).
 
 ## Terminals
 

@@ -197,12 +197,15 @@ mod tests {
     }
 
     #[test]
-    fn matches_an_independent_implementation() {
-        let expected = concat!(
-            "544b01010303000001020304050607080000002a000003c0",
-            "81a3a25cdf1c770c1831062793ebfc6c2ca484ed427c518c4325481c0974a3bc8879",
+    fn matches_an_independent_implementation_and_the_spec() {
+        let head = "544b01010303000001020304050607080000002a000003c0";
+        let rest = "81a3a25cdf1c770c1831062793ebfc6c2ca484ed427c518c4325481c0974a3bc8879";
+        assert_eq!(hex(&sealed(b"takkie test vector")), format!("{head}{rest}"));
+        let spec = include_str!("../../../docs/protocol.md");
+        assert!(
+            spec.contains(head) && spec.contains(rest),
+            "docs/protocol.md doesn't list the sealed packet vector"
         );
-        assert_eq!(hex(&sealed(b"takkie test vector")), expected);
     }
 
     proptest! {
