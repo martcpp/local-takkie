@@ -15,7 +15,7 @@ expression: "screen(&app, &talking_peers())"
 │                  │ M        mute or unmute what you hear                      │                  │
 │                  │ + / -    volume up or down                                 │                  │
 └──────────────────│ D        show the microphone and speaker in use            │                  │
-┌🎤  Push-to-Talk (S│ 1-9, 0   channel 1 to 10 (not yet: use --channel)          │                  │
+┌🎤  Push-to-Talk (S│ 1-9, 0   switch to channel 1 to 10                         │                  │
 │                  │ ?        this help                                         │                  │
 └──────────────────│ Q / Esc  quit                                              │                  │
 ┌🔊  Levels─────────└────────────────────────────────────────────────────────────┘                  │

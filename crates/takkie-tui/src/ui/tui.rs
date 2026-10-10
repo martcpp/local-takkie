@@ -69,7 +69,7 @@ const BINDINGS: [(&str, &str); 8] = [
     ("M", "mute or unmute what you hear"),
     ("+ / -", "volume up or down"),
     ("D", "show the microphone and speaker in use"),
-    ("1-9, 0", "channel 1 to 10 (not yet: use --channel)"),
+    ("1-9, 0", "switch to channel 1 to 10"),
     ("?", "this help"),
     ("Q / Esc", "quit"),
 ];
@@ -83,7 +83,7 @@ enum Key {
     Mute,
     Volume(i8),
     Devices,
-    Channel,
+    Channel(ChannelId),
 }
 
 fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
@@ -99,7 +99,13 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         (KeyCode::Char('+' | '='), _) => Some(Key::Volume(1)),
         (KeyCode::Char('-' | '_'), _) => Some(Key::Volume(-1)),
         (KeyCode::Char('d' | 'D'), _) => Some(Key::Devices),
-        (KeyCode::Char('0'..='9'), _) => Some(Key::Channel),
+        (KeyCode::Char(digit @ '0'..='9'), _) => {
+            let number = match digit {
+                '0' => 10,
+                _ => digit as u8 - b'0',
+            };
+            ChannelId::try_from(number).ok().map(Key::Channel)
+        }
         _ => None,
     }
 }
@@ -304,10 +310,12 @@ fn run_app(
                     app.log.push(format!("🎤 Mic: {}", shown(&app.mic)));
                     app.log.push(format!("🔈 Speaker: {}", shown(&app.speaker)));
                 }
-                Some(Key::Channel) => app
-                    .log
-                    .push("🔢 Channel keys aren't active yet, start with --channel"),
-                None => {}
+                Some(Key::Channel(channel)) if channel != snapshot.channel => {
+                    set_talking(app, engine, false);
+                    engine.set_channel(channel);
+                    app.log.push(format!("📻 Channel {channel}"));
+                }
+                Some(Key::Channel(_)) | None => {}
             }
         }
         feed(app, engine, PttInput::Tick);
@@ -699,8 +707,10 @@ mod tests {
         assert_eq!(press('='), Some(Key::Volume(1)));
         assert_eq!(press('-'), Some(Key::Volume(-1)));
         assert_eq!(press('D'), Some(Key::Devices));
-        assert_eq!(press('1'), Some(Key::Channel));
-        assert_eq!(press('0'), Some(Key::Channel));
+        let channel = |n| Some(Key::Channel(ChannelId::try_from(n).unwrap()));
+        assert_eq!(press('1'), channel(1));
+        assert_eq!(press('9'), channel(9));
+        assert_eq!(press('0'), channel(10));
         assert_eq!(key_action(KeyCode::Char('m'), Release), None);
     }
 
