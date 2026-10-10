@@ -3,11 +3,14 @@ import { describe as suite, expect, test } from 'vitest'
 import type { Peer, Snapshot } from './engine'
 import {
   MAX_LOG,
+  channelState,
   describe,
   initial,
   label,
+  meter,
   ordered,
   withEvent,
+  withNote,
   withProblem,
   withSnapshot,
 } from './state'
@@ -138,6 +141,49 @@ suite('the event log', () => {
     expect(state.log).toHaveLength(MAX_LOG)
     expect(state.log[0].text).toBe('line 5')
     expect(state.log.at(-1)?.text).toBe(`line ${MAX_LOG + 4}`)
+  })
+})
+
+suite('channel state', () => {
+  const talking = (id: string, name: string, channel = 2) => peer(id, name, channel, { talking: true })
+
+  test('free when nobody on the channel talks', () => {
+    const quiet = snapshot([peer('01', 'Bedroom'), talking('02', 'Office', 5)])
+    expect(channelState(quiet)).toEqual({ kind: 'free', text: 'Free' })
+  })
+
+  test('busy names who is talking', () => {
+    expect(channelState(snapshot([talking('01', 'Bedroom')]))).toEqual({
+      kind: 'busy',
+      text: 'Busy: Bedroom is talking',
+    })
+    const crowd = snapshot([talking('01', 'Bedroom'), talking('03', 'Attic'), talking('04', '')])
+    expect(channelState(crowd).text).toBe('Busy: Attic and 2 more are talking')
+  })
+
+  test('transmitting wins, and says who else talks', () => {
+    const alone = { ...snapshot(), transmitting: true }
+    expect(channelState(alone)).toEqual({ kind: 'transmitting', text: 'Transmitting' })
+    const both = { ...snapshot([talking('01', 'Bedroom')]), transmitting: true }
+    expect(channelState(both).text).toBe('Transmitting (Bedroom is talking too)')
+  })
+})
+
+suite('meters and notes', () => {
+  test('meters use a decibel scale', () => {
+    expect(meter(0)).toBe(0)
+    expect(meter(0.0005)).toBe(0)
+    expect(meter(Number.NaN)).toBe(0)
+    expect(meter(1)).toBe(1)
+    expect(meter(4)).toBe(1)
+    expect(meter(0.1)).toBeCloseTo(40 / 60)
+    expect(meter(0.01)).toBeCloseTo(20 / 60)
+  })
+
+  test('a note is added to the log like an event line', () => {
+    const state = withNote(running(), 'Channel 3', 7)
+    expect(state.log).toEqual([{ at: 7, text: 'Channel 3' }])
+    expect(state.snapshot).not.toBeNull()
   })
 })
 
