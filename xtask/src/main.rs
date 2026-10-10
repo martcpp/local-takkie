@@ -16,6 +16,7 @@ const USAGE: &str = "usage: cargo xtask <command>
 
 commands:
   ci                  run the checks CI runs: fmt, clippy, tests and cargo-deny
+  gui                 check the desktop app: frontend types and build, clippy, tests
   fmt                 format the whole workspace
   release <version>   set the version and regenerate CHANGELOG.md, e.g. release 0.2.0";
 
@@ -23,6 +24,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("ci") => ci(),
+        Some("gui") => gui(),
         Some("fmt") => cargo(&["fmt", "--all"]),
         Some("release") => release::release(args.get(1).map(String::as_str)),
         Some("help" | "-h" | "--help") => {
@@ -43,17 +45,43 @@ fn main() -> ExitCode {
     }
 }
 
+// Left out of `ci`: it needs Node and, on Linux, WebKitGTK.
+const GUI: &str = "takkie-app";
+
+fn gui() -> Result<()> {
+    let ui = workspace_root().join("apps").join("takkie-app").join("ui");
+    let ui = ui.to_str().context("the repo path isn't valid UTF-8")?;
+    if !Path::new(ui).join("node_modules").exists() {
+        npm(&["--prefix", ui, "ci"])?;
+    }
+    npm(&["--prefix", ui, "run", "check"])?;
+    npm(&["--prefix", ui, "run", "build"])?;
+    cargo(&["clippy", "-p", GUI, "--all-targets", "--", "-D", "warnings"])?;
+    cargo(&["test", "-p", GUI])?;
+    eprintln!(
+        "
+xtask: the desktop app checks passed"
+    );
+    Ok(())
+}
+
+fn npm(args: &[&str]) -> Result<()> {
+    run(if cfg!(windows) { "npm.cmd" } else { "npm" }, "npm", args)
+}
+
 fn ci() -> Result<()> {
     cargo(&["fmt", "--all", "--check"])?;
     cargo(&[
         "clippy",
         "--workspace",
+        "--exclude",
+        GUI,
         "--all-targets",
         "--",
         "-D",
         "warnings",
     ])?;
-    cargo(&["test", "--workspace"])?;
+    cargo(&["test", "--workspace", "--exclude", GUI])?;
     if !workspace_root().join("deny.toml").exists() {
         eprintln!("\nxtask: skipping cargo deny check (no deny.toml yet)");
     } else if !succeeds(cargo_bin(), &["deny", "--version"]) {

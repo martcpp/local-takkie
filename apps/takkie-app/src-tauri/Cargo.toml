@@ -1,0 +1,28 @@
+[package]
+name = "takkie-app"
+description = "local-takkie desktop and Android app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Android loads the app as a library; the desktop binary is a thin wrapper.
+[lib]
+name = "takkie_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+serde = { workspace = true }
+takkie-engine = { workspace = true }
+tauri = { version = "2.12", features = [] }
+
+[lints]
+workspace = true
+
+# Packaged by Tauri (E14), not by dist.
+[package.metadata.dist]
+dist = false

@@ -1,5 +1,7 @@
 [workspace]
-members = ["crates/*", "xtask"]
+members = ["crates/*", "xtask", "apps/takkie-app/src-tauri"]
+# The GUI needs Node and, on Linux, WebKitGTK, so plain cargo commands skip it.
+default-members = ["crates/*", "xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -11,7 +13,9 @@ publish = false
 
 [workspace.dependencies]
 crossbeam-channel = "0.5.17"
+serde = { version = "1", features = ["derive"] }
 takkie-core = { path = "crates/takkie-core" }
+takkie-engine = { path = "crates/takkie-engine" }
 thiserror = "2"
 tracing = "0.1"
 zeroize = "1"

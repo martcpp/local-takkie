@@ -51,6 +51,30 @@ cargo install --locked cargo-llvm-cov
 cargo llvm-cov -p takkie-core --summary-only
 ```
 
+## The desktop app
+
+The GUI is in `apps/takkie-app`: a Tauri 2 app with the Rust side in
+`src-tauri` and a Svelte + TypeScript frontend in `ui`. It needs
+[Node.js](https://nodejs.org) 22 or newer and the Tauri CLI
+(`cargo install --locked tauri-cli`). On Linux it also needs the
+[WebKitGTK packages Tauri lists](https://tauri.app/start/prerequisites/#linux).
+
+```bash
+cd apps/takkie-app
+npm --prefix ui install     # once
+cargo tauri dev             # opens the window and reloads on changes
+```
+
+`cargo xtask ci` leaves the app out, so the terminal app can be worked on
+without Node or WebKitGTK. When you change anything under `apps/`, also run:
+
+```bash
+cargo xtask gui
+```
+
+It type-checks and builds the frontend, then runs clippy and the tests for
+the app.
+
 ## Checking discovery on a real network
 
 The tests never touch real mDNS, because CI runners may block multicast.
