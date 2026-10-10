@@ -6,6 +6,7 @@ pub mod audio;
 pub mod engine;
 /// Transport, discovery and peers.
 pub mod net;
+mod threads;
 
 pub use audio::devices::{DeviceInfo, DeviceList, Direction};
 pub use engine::{
