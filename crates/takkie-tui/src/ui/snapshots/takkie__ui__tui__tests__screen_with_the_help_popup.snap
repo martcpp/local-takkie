@@ -14,14 +14,14 @@ expression: "screen(&app, &talking_peers())"
 │                  │ + / -    volume up or down                                 │                  │
 │                  │ ↑ / ↓    pick someone in the peer list                     │                  │
 │                  │ X        mute or unmute the picked person                  │                  │
-└──────────────────│ D        show the microphone and speaker in use            │                  │
-┌🎤  Push-to-Talk (S│ 1-9, 0   switch to channel 1 to 10                         │                  │
-│                🟡 │ P        set or clear this channel's passphrase            │                  │
-└──────────────────│ ?        this help                                         │                  │
-┌🔊  Levels─────────│ Q / Esc  quit                                              │                  │
-│Mic      ░░░░░░░░░└────────────────────────────────────────────────────────────┘                  │
-│Speaker  ████████████████████████████████████████░░░░░░░░░││                                      │
-│Buffer  48 ms    Volume  100%                             ││                                      │
+└──────────────────│ B        beeps on or off (when talk starts and ends)       │                  │
+┌🎤  Push-to-Talk (S│ D        show the microphone and speaker in use            │                  │
+│                🟡 │ 1-9, 0   switch to channel 1 to 10                         │                  │
+└──────────────────│ P        set or clear this channel's passphrase            │                  │
+┌🔊  Levels─────────│ ?        this help                                         │                  │
+│Mic      ░░░░░░░░░│ Q / Esc  quit                                              │                  │
+│Speaker  █████████└────────────────────────────────────────────────────────────┘                  │
+│Buffer  48 ms    Volume  100%    Beeps  off               ││                                      │
 └──────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                      SPACE starts and stops talking | ? keys | Q or ESC quit                     │

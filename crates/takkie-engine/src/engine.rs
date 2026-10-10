@@ -71,6 +71,8 @@ pub struct EngineConfig {
     pub static_peers: Vec<SocketAddr>,
     /// Mute playback while transmitting.
     pub half_duplex: bool,
+    /// Beep when someone finishes talking and when we start.
+    pub beeps: bool,
 }
 
 impl Default for EngineConfig {
@@ -84,6 +86,7 @@ impl Default for EngineConfig {
             output_device: None,
             static_peers: Vec::new(),
             half_duplex: true,
+            beeps: false,
         }
     }
 }
@@ -209,6 +212,8 @@ pub struct EngineSnapshot {
     pub transmitting: bool,
     /// Playback is muted.
     pub muted: bool,
+    /// The start and end beeps are on.
+    pub beeps: bool,
     /// Playback volume.
     pub volume: f32,
     /// The latest mic level.
@@ -344,6 +349,7 @@ impl Engine {
             ..MixShared::default()
         };
         mix.controls.set_half_duplex(config.half_duplex);
+        mix.controls.set_beeps(config.beeps);
 
         let (packets_in, packets) = unbounded();
         let (news_in, news) = unbounded();
@@ -496,6 +502,11 @@ impl Engine {
         self.shared.mix.controls.set_peer_muted(peer, muted);
     }
 
+    /// Turns the start and end beeps on or off.
+    pub fn set_beeps(&self, on: bool) {
+        self.shared.mix.controls.set_beeps(on);
+    }
+
     /// Playback volume: 1.0 is unchanged, clamped to 0.0..=2.0.
     pub fn set_volume(&self, volume: f32) {
         self.shared.mix.controls.set_volume(volume);
@@ -523,6 +534,7 @@ impl Engine {
             private: shared.key.load().is_some(),
             transmitting: shared.transmitting.load(Relaxed),
             muted: shared.mix.controls.is_muted(),
+            beeps: shared.mix.controls.beeps(),
             volume: shared.mix.controls.volume(),
             mic: shared.level.get(),
             speaker: shared.mix.level.get(),
@@ -786,6 +798,17 @@ mod tests {
         passphrase: Option<&str>,
         static_peers: Vec<SocketAddr>,
     ) -> Node {
+        let config = EngineConfig {
+            display_name: name.into(),
+            channel: ChannelId::try_from(channel).unwrap(),
+            passphrase: passphrase.and_then(secret),
+            static_peers,
+            ..EngineConfig::default()
+        };
+        started(network, frequency, config)
+    }
+
+    fn started(network: &MemoryNetwork, frequency: f32, config: EngineConfig) -> Node {
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
         let transport = Arc::new(network.bind(0));
         let addr = transport.local_addr();
@@ -795,13 +818,6 @@ mod tests {
                 amplitude: AMPLITUDE,
             },
             speaker: speaker.clone(),
-        };
-        let config = EngineConfig {
-            display_name: name.into(),
-            channel: ChannelId::try_from(channel).unwrap(),
-            passphrase: passphrase.and_then(secret),
-            static_peers,
-            ..EngineConfig::default()
         };
         let fast = Tuning {
             hello_every: Duration::from_millis(100),
@@ -984,6 +1000,65 @@ mod tests {
         );
         let b_heard = hears_only(&b.speaker, 440.0);
         assert!(close(b_heard, 440.0), "B heard {b_heard:?} after D joined");
+    }
+
+    fn beeped(speaker: &LiveSink) -> bool {
+        const WINDOW: usize = RATE as usize * 60 / 1_000;
+        speaker
+            .last(usize::MAX)
+            .windows(WINDOW)
+            .step_by(WINDOW / 6)
+            .any(|window| {
+                let level = (window.iter().map(|s| s * s).sum::<f32>() / WINDOW as f32).sqrt();
+                let crossings = window
+                    .windows(2)
+                    .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+                    .count();
+                level > 0.1 && (114..=126).contains(&crossings)
+            })
+    }
+
+    #[test]
+    fn a_beep_ends_a_transmission_only_for_those_who_asked() {
+        let network = MemoryNetwork::new();
+        let channel = ChannelId::try_from(3).unwrap();
+        let listener = |name: &str, beeps, static_peers| {
+            let config = EngineConfig {
+                display_name: name.into(),
+                channel,
+                beeps,
+                static_peers,
+                ..EngineConfig::default()
+            };
+            started(&network, 440.0, config)
+        };
+        let b = listener("B", true, Vec::new());
+        let c = listener("C", false, Vec::new());
+        let a = node_on(&network, "A", 3, 440.0, vec![b.addr, c.addr]);
+        let a_id = a.engine.id();
+
+        a.engine.set_transmitting(true);
+        let started = EngineEvent::TalkStarted(a_id);
+        wait_for(&b.events, |e| *e == started);
+        wait_for(&c.events, |e| *e == started);
+        after(300);
+        assert!(!beeped(&b.speaker), "a beep before the end");
+        a.engine.set_transmitting(false);
+        let stopped = EngineEvent::TalkStopped(a_id);
+        wait_for(&b.events, |e| *e == stopped);
+        wait_for(&c.events, |e| *e == stopped);
+
+        assert!(eventually(|| beeped(&b.speaker)), "B heard no beep");
+        assert!(!beeped(&c.speaker), "C beeped without asking");
+        assert!(b.engine.snapshot().beeps && !c.engine.snapshot().beeps);
+
+        c.engine.set_beeps(true);
+        assert!(c.engine.snapshot().beeps);
+        a.engine.set_transmitting(true);
+        wait_for(&c.events, |e| *e == started);
+        a.engine.set_transmitting(false);
+        wait_for(&c.events, |e| *e == stopped);
+        assert!(eventually(|| beeped(&c.speaker)), "C heard no beep");
     }
 
     #[test]
