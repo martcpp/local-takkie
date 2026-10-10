@@ -2,6 +2,7 @@
 //! push-to-talk, Opus, a lossy in-memory network, jitter buffer, decoding,
 //! mixing, pacing, speaker.
 
+use std::error::Error;
 use std::time::{Duration, Instant};
 
 use takkie_core::{PeerId, Seq};
@@ -22,7 +23,12 @@ struct Run {
     dropped: usize,
 }
 
-fn run(mic_rate: u32, speaker_rate: u32, seconds: u32, loss_percent: u32) -> Run {
+fn run(
+    mic_rate: u32,
+    speaker_rate: u32,
+    seconds: u32,
+    loss_percent: u32,
+) -> Result<Run, Box<dyn Error>> {
     let mut source = FakeSource::new(
         mic_rate,
         Signal::Sine {
@@ -30,11 +36,11 @@ fn run(mic_rate: u32, speaker_rate: u32, seconds: u32, loss_percent: u32) -> Run
             amplitude: AMPLITUDE,
         },
     );
-    let mut framer = Framer::new(mic_rate).unwrap();
+    let mut framer = Framer::new(mic_rate)?;
     let mut gate = Gate::default();
-    let mut encoder = VoiceEncoder::new().unwrap();
+    let mut encoder = VoiceEncoder::new()?;
     let mut mixer = Mixer::new();
-    let mut pacer = Pacer::new(speaker_rate).unwrap();
+    let mut pacer = Pacer::new(speaker_rate)?;
     let mut sink = FakeSink::new(speaker_rate, speaker_rate as usize / 5);
 
     let t0 = Instant::now();
@@ -45,11 +51,11 @@ fn run(mic_rate: u32, speaker_rate: u32, seconds: u32, loss_percent: u32) -> Run
     for tick in 0..seconds * 50 {
         let now = t0 + Duration::from_millis(20 * u64::from(tick));
         source.advance_ms(20);
-        while let Some(frame) = framer.next(&mut source).unwrap() {
+        while let Some(frame) = framer.next(&mut source)? {
             let Some(mark) = gate.pass(true) else {
                 continue;
             };
-            let payload = encoder.encode(frame).unwrap().to_vec();
+            let payload = encoder.encode(frame)?.to_vec();
             seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let lose = tick > 10 && (seed >> 16) % 100 < loss_percent;
             if lose {
@@ -61,24 +67,24 @@ fn run(mic_rate: u32, speaker_rate: u32, seconds: u32, loss_percent: u32) -> Run
                     payload,
                     end: mark.end,
                 };
-                mixer.receive(packet, now).unwrap();
+                mixer.receive(packet, now)?;
             }
             seq += 1;
         }
-        pacer.fill(&mut mixer, &mut sink, now).unwrap();
+        pacer.fill(&mut mixer, &mut sink, now)?;
         sink.play(speaker_rate as usize / 50);
         if tick > 25 {
             most_queued = most_queued.max(sink.queued());
             most_buffered = most_buffered.max(mixer.buffered());
         }
     }
-    Run {
+    Ok(Run {
         played: sink.played().to_vec(),
         rate: speaker_rate,
         most_queued,
         most_buffered,
         dropped,
-    }
+    })
 }
 
 impl Run {
@@ -133,23 +139,26 @@ impl Run {
 }
 
 #[test]
-fn a_tone_crosses_the_pipeline_at_48k() {
-    let run = run(48_000, 48_000, 10, 0);
+fn a_tone_crosses_the_pipeline_at_48k() -> Result<(), Box<dyn Error>> {
+    let run = run(48_000, 48_000, 10, 0)?;
     run.check();
     assert_eq!(run.silent_frames(), 0);
+    Ok(())
 }
 
 #[test]
-fn a_tone_crosses_the_pipeline_between_44k1_devices() {
-    let run = run(44_100, 44_100, 10, 0);
+fn a_tone_crosses_the_pipeline_between_44k1_devices() -> Result<(), Box<dyn Error>> {
+    let run = run(44_100, 44_100, 10, 0)?;
     run.check();
     assert_eq!(run.silent_frames(), 0);
+    Ok(())
 }
 
 #[test]
-fn five_percent_loss_leaves_no_gap_longer_than_a_frame() {
-    let run = run(48_000, 48_000, 20, 5);
+fn five_percent_loss_leaves_no_gap_longer_than_a_frame() -> Result<(), Box<dyn Error>> {
+    let run = run(48_000, 48_000, 20, 5)?;
     assert!(run.dropped >= 20, "only {} packets dropped", run.dropped);
     run.check();
     assert_eq!(run.silent_frames(), 0);
+    Ok(())
 }
