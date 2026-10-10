@@ -16,6 +16,7 @@ use takkie_core::{ChannelId, PeerId, Seq};
 
 use super::transport::Transport;
 use crate::audio::tx::TxEvent;
+use crate::threads::{STOP_WITHIN, join_within};
 
 const MAX_DATAGRAM: usize = 1_500;
 
@@ -191,7 +192,7 @@ impl Drop for SendThread {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }

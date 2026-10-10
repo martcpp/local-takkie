@@ -29,8 +29,11 @@ use crate::net::peers::{PEER_TIMEOUT, PeerOutputs, PeerThread, Peers};
 use crate::net::rx::{RxCounters, RxOutputs, RxThread};
 use crate::net::send::{PacketSender, SendCounters, SendThread};
 use crate::net::{Transport, UdpTransport};
+use crate::threads::{STOP_WITHIN, join_within};
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
+// The control thread owns mDNS, whose goodbye can take up to two seconds.
+const MDNS_GOODBYE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {
@@ -255,7 +258,7 @@ pub struct Engine {
     hello: Option<HelloThread>,
     commands: Option<Sender<Command>>,
     control: Option<JoinHandle<()>>,
-    _send: SendThread,
+    send: Option<SendThread>,
     _rx: RxThread,
     _peers: PeerThread,
 }
@@ -406,7 +409,7 @@ impl Engine {
             hello: Some(hello),
             commands: Some(commands),
             control: Some(control),
-            _send: send,
+            send: Some(send),
             _rx: rx,
             _peers: peers,
         };
@@ -495,11 +498,13 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        // Bye has to go out before the mDNS goodbye, which the control thread owns.
+        // No audio may follow our Bye, and Bye goes before the mDNS goodbye in the control thread.
+        self.shared.transmitting.store(false, Relaxed);
+        drop(self.send.take());
         drop(self.hello.take());
         drop(self.commands.take());
         if let Some(control) = self.control.take() {
-            let _ = control.join();
+            join_within(control, STOP_WITHIN + MDNS_GOODBYE);
         }
     }
 }
@@ -628,8 +633,6 @@ mod tests {
 
     const RATE: u32 = 48_000;
     const AMPLITUDE: f32 = 0.4;
-    const DRAINED_MS: u64 = 600;
-    const RESUMED_MS: u64 = 1_500;
 
     struct Fakes {
         mic: Signal,
@@ -704,6 +707,17 @@ mod tests {
         (heard.iter().map(|s| s * s).sum::<f32>() / heard.len() as f32).sqrt()
     }
 
+    fn settle(speaker: &LiveSink, done: impl Fn(f32) -> bool) -> f32 {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let heard = level(speaker);
+            if done(heard) || Instant::now() >= deadline {
+                return heard;
+            }
+            after(50);
+        }
+    }
+
     fn after(ms: u64) {
         thread::sleep(Duration::from_millis(ms));
     }
@@ -734,41 +748,35 @@ mod tests {
         assert!(heard < 0.01, "B heard {heard} before A talked");
 
         a.engine.set_transmitting(true);
-        after(500);
-        let full = level(&b.speaker);
+        let full = settle(&b.speaker, |heard| (heard - tone).abs() / tone < 0.3);
         assert!(
             (full - tone).abs() / tone < 0.3,
             "B heard {full}, A sent {tone}"
         );
 
         b.engine.set_volume(0.5);
-        after(400);
-        let half = level(&b.speaker);
+        let half = settle(&b.speaker, |heard| (heard / full - 0.5).abs() < 0.1);
         assert!(
             (half / full - 0.5).abs() < 0.1,
             "half volume gave {half} of {full}"
         );
 
         b.engine.set_muted(true);
-        after(400);
-        let heard = level(&b.speaker);
+        let heard = settle(&b.speaker, |heard| heard < 0.01);
         assert!(heard < 0.01, "muted B heard {heard}");
         assert!(b.engine.snapshot().speaker.rms < 0.01);
 
         b.engine.set_muted(false);
         b.engine.set_channel(ChannelId::try_from(4).unwrap());
-        after(DRAINED_MS);
-        let heard = level(&b.speaker);
+        let heard = settle(&b.speaker, |heard| heard < 0.01);
         assert!(heard < 0.01, "B on channel 4 heard {heard}");
 
         b.engine.set_channel(ChannelId::try_from(3).unwrap());
-        after(RESUMED_MS);
-        let heard = level(&b.speaker);
+        let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
 
         a.engine.set_transmitting(false);
-        after(DRAINED_MS);
-        let heard = level(&b.speaker);
+        let heard = settle(&b.speaker, |heard| heard < 0.01);
         assert!(heard < 0.01, "B heard {heard} after A let go");
     }
 
@@ -778,8 +786,7 @@ mod tests {
         let b = node(&network, "B", Vec::new());
         let a = node(&network, "A", vec![b.addr]);
         a.engine.set_transmitting(true);
-        after(1_500);
-        let heard = level(&b.speaker);
+        let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "B heard {heard} before switching");
 
         b.engine.set_channel(ChannelId::try_from(4).unwrap());
@@ -791,8 +798,7 @@ mod tests {
         assert_eq!(away.peers[0].channel.get(), 3);
 
         b.engine.set_channel(ChannelId::try_from(3).unwrap());
-        after(RESUMED_MS);
-        let heard = level(&b.speaker);
+        let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
     }
 
@@ -850,6 +856,40 @@ mod tests {
             wait_for(&b.events, |e| matches!(e, EngineEvent::PeerLeft(_))),
             EngineEvent::PeerLeft(a_id)
         );
+        assert!(b.engine.snapshot().peers.is_empty());
+    }
+
+    #[test]
+    fn twenty_starts_and_stops_leave_no_thread_behind() {
+        let network = MemoryNetwork::new();
+        let b = node(&network, "B", Vec::new());
+        for round in 0..20 {
+            let a = node(&network, "A", vec![b.addr]);
+            let a_id = a.engine.id();
+            assert!(matches!(
+                wait_for(&b.events, |e| matches!(e, EngineEvent::PeerJoined(_))),
+                EngineEvent::PeerJoined(peer) if peer.id == a_id
+            ));
+            a.engine.set_transmitting(true);
+            after(50);
+            let stopping = Instant::now();
+            drop(a);
+            let took = stopping.elapsed();
+            assert!(
+                took < Duration::from_secs(1),
+                "round {round}: stopping took {took:?}"
+            );
+            assert_eq!(
+                wait_for(&b.events, |e| matches!(e, EngineEvent::PeerLeft(_))),
+                EngineEvent::PeerLeft(a_id)
+            );
+            let back = b
+                .events
+                .recv_timeout(Duration::from_millis(100))
+                .ok()
+                .filter(|e| matches!(e, EngineEvent::PeerJoined(peer) if peer.id == a_id));
+            assert_eq!(back, None, "round {round}: A came back after leaving");
+        }
         assert!(b.engine.snapshot().peers.is_empty());
     }
 

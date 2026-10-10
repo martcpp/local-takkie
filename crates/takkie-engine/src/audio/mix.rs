@@ -18,6 +18,7 @@ use super::codec::{CodecError, VoiceDecoder};
 use super::io::AudioSink;
 use super::resample::{FRAME, ResampleError, Resampler};
 use super::tx::LevelMeter;
+use crate::threads::{STOP_WITHIN, join_within};
 
 /// An audio packet from the network.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -457,7 +458,7 @@ impl Drop for MixThread {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }

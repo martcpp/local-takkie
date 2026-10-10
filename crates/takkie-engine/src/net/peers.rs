@@ -1,6 +1,7 @@
 //! News about peers, from packets and from mDNS, and the thread that keeps
 //! the peer table: who we send to, and who has gone quiet.
 
+use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use takkie_core::peers::{Peer, PeerEvent, PeerSource, PeerTable};
 use takkie_core::{ChannelId, PeerId};
 
 use crate::audio::mix::MixInput;
+use crate::threads::{STOP_WITHIN, join_within};
 
 /// A peer silent this long is dropped.
 pub const PEER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -129,6 +131,7 @@ pub struct Peers {
     targets: Arc<ArcSwap<Vec<SocketAddr>>>,
     view: Arc<ArcSwap<Vec<Peer>>>,
     timeout: Duration,
+    said_bye: HashMap<PeerId, Instant>,
 }
 
 impl Peers {
@@ -146,6 +149,7 @@ impl Peers {
             targets,
             view: Arc::default(),
             timeout,
+            said_bye: HashMap::new(),
         }
     }
 
@@ -162,8 +166,22 @@ impl Peers {
         &self.table
     }
 
-    /// Applies one piece of news.
+    /// Applies one piece of news. Anything from a peer that said Bye is
+    /// ignored for a while: ids are new each run, so it's a late packet.
     pub fn handle(&mut self, message: PeerMessage, now: Instant) -> Option<PeerEvent> {
+        let sender = match &message {
+            PeerMessage::Hello { sender, .. }
+            | PeerMessage::Heard { sender, .. }
+            | PeerMessage::Announced { sender, .. } => *sender,
+            PeerMessage::Bye { sender } => {
+                self.said_bye.insert(*sender, now);
+                *sender
+            }
+            PeerMessage::Withdrawn { sender } => *sender,
+        };
+        if !matches!(message, PeerMessage::Bye { .. }) && self.said_bye.contains_key(&sender) {
+            return None;
+        }
         let event = apply(&mut self.table, message, now);
         self.publish();
         event
@@ -171,6 +189,8 @@ impl Peers {
 
     /// Drops quiet peers. Also picks up a channel change.
     pub fn expire(&mut self, now: Instant) -> Vec<PeerEvent> {
+        self.said_bye
+            .retain(|_, at| now.saturating_duration_since(*at) < self.timeout);
         let left = self.table.expire(now, self.timeout);
         self.publish();
         left
@@ -250,7 +270,7 @@ impl Drop for PeerThread {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            join_within(handle, STOP_WITHIN);
         }
     }
 }
@@ -318,6 +338,31 @@ mod tests {
             now,
         );
         assert!(targets.load().is_empty());
+    }
+
+    #[test]
+    fn late_packets_after_bye_do_not_bring_a_peer_back() {
+        let (mut peers, _, targets) = peers_on(2, PEER_TIMEOUT);
+        let start = Instant::now();
+        let id = PeerId::new(1);
+        peers.handle(hello(id, 2, 1), start);
+        assert_eq!(
+            peers.handle(PeerMessage::Bye { sender: id }, start),
+            Some(PeerEvent::Left(id))
+        );
+        let heard = PeerMessage::Heard {
+            sender: id,
+            channel: ch(2),
+            addr: addr(1),
+        };
+        assert_eq!(peers.handle(heard.clone(), start), None);
+        assert_eq!(peers.handle(hello(id, 2, 1), start), None);
+        assert!(peers.table().is_empty());
+        assert!(targets.load().is_empty());
+
+        let later = start + PEER_TIMEOUT;
+        peers.expire(later);
+        assert_eq!(peers.handle(heard, later), Some(PeerEvent::Joined(id)));
     }
 
     #[test]
