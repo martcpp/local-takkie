@@ -1,26 +1,38 @@
 //! What the frontend can ask the engine to do.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use takkie_core::{ChannelId, Passphrase};
 use takkie_engine::{Engine, EngineConfig, EngineEvent};
 use tauri::State;
 
-use crate::view::{DevicesView, SnapshotView, peer_id};
+use crate::view::{DevicesView, Running, SnapshotView, peer_id};
 
 /// The running engine, or why there isn't one.
-pub struct Radio(Mutex<Result<Engine, String>>);
+pub struct Radio {
+    engine: Mutex<Result<Engine, String>>,
+    running: Arc<Mutex<Running>>,
+}
 
 impl Radio {
     /// Starts the engine and hands each of its events to `on_event`. A
     /// failure is kept, so the window can show it.
     pub fn start(config: EngineConfig, on_event: impl Fn(EngineEvent) + Send + 'static) -> Self {
+        let running = Arc::new(Mutex::new(Running::default()));
+        let noting = Arc::clone(&running);
         let started = match Engine::start(config) {
             Ok((engine, events)) => {
                 let forwarding = std::thread::Builder::new()
                     .name("takkie-app-events".into())
-                    .spawn(move || events.into_iter().for_each(on_event));
+                    .spawn(move || {
+                        for event in events {
+                            if let Ok(mut running) = noting.lock() {
+                                running.note(&event);
+                            }
+                            on_event(event);
+                        }
+                    });
                 if let Err(error) = forwarding {
                     tracing::warn!("engine events won't be read: {error}");
                 }
@@ -31,24 +43,32 @@ impl Radio {
                 Err(error.to_string())
             }
         };
-        Self(Mutex::new(started))
+        Self {
+            engine: Mutex::new(started),
+            running,
+        }
     }
 
     /// Stops the engine: threads joined, Bye sent, mDNS unregistered.
     pub fn stop(&self) {
-        if let Ok(mut engine) = self.0.lock() {
+        if let Ok(mut engine) = self.engine.lock() {
             *engine = Err("the app is closing".to_owned());
         }
     }
 
     /// What the main screen draws right now.
     pub fn view(&self) -> Result<SnapshotView, String> {
-        self.with(|engine| SnapshotView::at(&engine.snapshot(), Instant::now()))
+        let running = self
+            .running
+            .lock()
+            .map(|running| running.clone())
+            .unwrap_or_default();
+        self.with(|engine| SnapshotView::at(&engine.snapshot(), &running, Instant::now()))
     }
 
     fn with<T>(&self, action: impl FnOnce(&Engine) -> T) -> Result<T, String> {
         let engine: MutexGuard<'_, _> = self
-            .0
+            .engine
             .lock()
             .map_err(|_| "the engine stopped unexpectedly".to_owned())?;
         match &*engine {
@@ -137,7 +157,10 @@ mod tests {
 
     #[test]
     fn a_stopped_radio_says_why_instead_of_acting() {
-        let radio = Radio(Mutex::new(Err("the port is taken".to_owned())));
+        let radio = Radio {
+            engine: Mutex::new(Err("the port is taken".to_owned())),
+            running: Arc::default(),
+        };
         let asked = radio.with(|engine| engine.set_muted(true));
         assert_eq!(
             asked,

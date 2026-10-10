@@ -5,7 +5,7 @@ use std::time::Instant;
 use serde::Serialize;
 use takkie_core::PeerId;
 use takkie_core::dsp::Level;
-use takkie_engine::{DeviceInfo, DeviceList, EngineEvent, EngineSnapshot, PeerInfo};
+use takkie_engine::{DeviceInfo, DeviceList, Direction, EngineEvent, EngineSnapshot, PeerInfo};
 
 /// Loudness of the latest frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -54,6 +54,32 @@ impl PeerView {
     }
 }
 
+/// Which microphone and speaker are running, learnt from the engine's
+/// events. `None` means that side isn't running.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Running {
+    input: Option<String>,
+    output: Option<String>,
+}
+
+impl Running {
+    /// Follows a device starting or going away; other events change nothing.
+    pub fn note(&mut self, event: &EngineEvent) {
+        let (direction, now) = match event {
+            EngineEvent::DeviceStarted {
+                direction,
+                description,
+            } => (direction, Some(description.clone())),
+            EngineEvent::DeviceLost(direction) => (direction, None),
+            _ => return,
+        };
+        match direction {
+            Direction::Input => self.input = now,
+            Direction::Output => self.output = now,
+        }
+    }
+}
+
 /// Everything the main screen draws.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,12 +94,14 @@ pub struct SnapshotView {
     mic: LevelView,
     speaker: LevelView,
     buffer_ms: u32,
+    input_device: Option<String>,
+    output_device: Option<String>,
     peers: Vec<PeerView>,
 }
 
 impl SnapshotView {
     /// The snapshot as the frontend sees it at `now`.
-    pub fn at(snapshot: &EngineSnapshot, now: Instant) -> Self {
+    pub fn at(snapshot: &EngineSnapshot, running: &Running, now: Instant) -> Self {
         Self {
             id: snapshot.id.to_string(),
             channel: snapshot.channel.get(),
@@ -85,6 +113,8 @@ impl SnapshotView {
             mic: snapshot.mic.into(),
             speaker: snapshot.speaker.into(),
             buffer_ms: snapshot.buffer_ms,
+            input_device: running.input.clone(),
+            output_device: running.output.clone(),
             peers: snapshot
                 .peers
                 .iter()
@@ -201,7 +231,7 @@ mod tests {
     use std::time::Duration;
 
     use takkie_core::ChannelId;
-    use takkie_engine::{Direction, EngineStats};
+    use takkie_engine::EngineStats;
 
     use super::*;
 
@@ -242,8 +272,15 @@ mod tests {
     fn a_snapshot_becomes_camel_case_json_with_hex_ids() {
         let now = Instant::now();
         let seen = now - Duration::from_millis(1_500);
-        let view = SnapshotView::at(&snapshot(vec![peer(u64::MAX, seen)]), now);
+        let mut running = Running::default();
+        running.note(&EngineEvent::DeviceStarted {
+            direction: Direction::Input,
+            description: "Headset (48000 Hz)".into(),
+        });
+        let view = SnapshotView::at(&snapshot(vec![peer(u64::MAX, seen)]), &running, now);
         let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["inputDevice"], "Headset (48000 Hz)");
+        assert!(json["outputDevice"].is_null());
         assert_eq!(json["id"], "00000000000000ab");
         assert_eq!(json["channel"], 4);
         assert_eq!(json["private"], true);
@@ -300,6 +337,26 @@ mod tests {
         let warning = event(&EngineEvent::Warning("no such microphone".into()));
         assert_eq!(warning["type"], "warning");
         assert_eq!(warning["text"], "no such microphone");
+    }
+
+    #[test]
+    fn running_devices_follow_started_and_lost_events() {
+        let started = |direction, name: &str| EngineEvent::DeviceStarted {
+            direction,
+            description: name.into(),
+        };
+        let mut running = Running::default();
+        assert_eq!(running.input, None);
+        running.note(&started(Direction::Input, "Headset"));
+        running.note(&started(Direction::Output, "Speakers"));
+        running.note(&EngineEvent::Warning("unrelated".into()));
+        assert_eq!(running.input.as_deref(), Some("Headset"));
+        assert_eq!(running.output.as_deref(), Some("Speakers"));
+        running.note(&EngineEvent::DeviceLost(Direction::Input));
+        assert_eq!(running.input, None);
+        assert_eq!(running.output.as_deref(), Some("Speakers"));
+        running.note(&started(Direction::Input, "Webcam"));
+        assert_eq!(running.input.as_deref(), Some("Webcam"));
     }
 
     #[test]
