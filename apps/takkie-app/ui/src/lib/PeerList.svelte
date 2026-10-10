@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snapshot } from './engine'
   import { ordered } from './state'
+  import { setPeerMuted } from './store.svelte'
 
   let { snapshot }: { snapshot: Snapshot } = $props()
 
@@ -21,9 +22,18 @@
           <span class="dot" class:talking={peer.talking} aria-hidden="true"></span>
           <span class="name">{peer.name || peer.id}</span>
           {#if peer.talking}<span class="sr-only">is talking</span>{/if}
-          {#if peer.muted}<span class="mark muted">muted</span>{/if}
           {#if peer.mismatch}<span class="mark mismatch">other passphrase</span>{/if}
           <span class="channel">ch {peer.channel}</span>
+          <button
+            class="mute"
+            class:on={peer.muted}
+            aria-pressed={peer.muted}
+            aria-label={`${peer.muted ? 'Unmute' : 'Mute'} ${peer.name || peer.id}`}
+            title={peer.muted ? 'Muted for you. Click to hear them again.' : 'Mute for you only'}
+            onclick={() => setPeerMuted(peer.id, !peer.muted)}
+          >
+            {peer.muted ? '🔇' : '🔈'}
+          </button>
         </li>
       {/each}
     </ul>
@@ -54,7 +64,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 0.625rem;
+    padding: 0.375rem 0.5rem 0.375rem 0.625rem;
     border-radius: 0.5rem;
     background: var(--surface);
   }
@@ -93,8 +103,14 @@
     border: 1px solid currentColor;
   }
 
-  .muted {
-    color: var(--warning);
+  .mute {
+    flex: none;
+    padding: 0.125rem 0.5rem;
+    background: transparent;
+  }
+
+  .mute.on {
+    border-color: var(--warning);
   }
 
   .mismatch {

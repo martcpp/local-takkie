@@ -29,6 +29,9 @@ export type Snapshot = {
   mic: Level
   speaker: Level
   bufferMs: number
+  /** What is running, or `null` when that side isn't. */
+  inputDevice: string | null
+  outputDevice: string | null
   peers: Peer[]
 }
 

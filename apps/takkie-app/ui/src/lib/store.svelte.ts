@@ -89,6 +89,8 @@ export async function setPassphrase(passphrase: string) {
   await ask(engine.setChannel(channel, passphrase))
 }
 
+export const setTransmitting = (on: boolean) => ask(engine.setTransmitting(on))
+export const setPeerMuted = (peer: string, muted: boolean) => ask(engine.setPeerMuted(peer, muted))
 export const setMuted = (muted: boolean) => ask(engine.setMuted(muted))
 export const setVolume = (volume: number) => ask(engine.setVolume(volume))
 export const setBeeps = (on: boolean) => ask(engine.setBeeps(on))

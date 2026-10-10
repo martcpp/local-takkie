@@ -7,6 +7,7 @@
   import Levels from './lib/Levels.svelte'
   import PassphraseDialog from './lib/PassphraseDialog.svelte'
   import PeerList from './lib/PeerList.svelte'
+  import PttButton from './lib/PttButton.svelte'
   import { channelState } from './lib/state'
   import { app, connect } from './lib/store.svelte'
 
@@ -38,6 +39,7 @@
   {:else if app.snapshot}
     <ChannelPicker snapshot={app.snapshot} onLock={() => passphrase?.open()} />
     <PeerList snapshot={app.snapshot} />
+    <PttButton snapshot={app.snapshot} />
     <Levels snapshot={app.snapshot} />
     <PassphraseDialog
       bind:this={passphrase}

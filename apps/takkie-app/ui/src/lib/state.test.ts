@@ -38,6 +38,8 @@ const snapshot = (peers: Peer[] = []): Snapshot => ({
   mic: { rms: 0, peak: 0 },
   speaker: { rms: 0, peak: 0 },
   bufferMs: 0,
+  inputDevice: 'Microphone',
+  outputDevice: 'Speakers',
   peers,
 })
 
