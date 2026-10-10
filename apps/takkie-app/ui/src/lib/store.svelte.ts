@@ -5,6 +5,8 @@ import * as engine from './engine'
 import {
   SHORT_PASSPHRASE,
   initial,
+  micGate,
+  withAccess,
   withEvent,
   withNote,
   withProblem,
@@ -23,6 +25,9 @@ export const app = {
   },
   get problem() {
     return state.problem
+  },
+  get access() {
+    return state.access
   },
   get log() {
     return state.log
@@ -51,14 +56,35 @@ export async function connect(): Promise<() => void> {
       state = withEvent(state, event, Date.now())
     }),
   ])
-  // Snapshots only flow while the engine runs, so ask once to learn why not.
+  await begin(engine.permissions())
+  return () => stops.forEach((stop) => stop())
+}
+
+// Starts the radio if the microphone is allowed. Snapshots only flow while
+// the engine runs, so one is asked for here to learn why it doesn't.
+async function begin(asked: Promise<engine.Access>) {
   try {
-    state = withSnapshot(state, await engine.snapshot())
+    state = withAccess(state, await asked)
+    if (state.access && micGate(state.access) === 'ready') {
+      await engine.startRadio()
+      state = withSnapshot(state, await engine.snapshot())
+    }
   } catch (problem) {
     state = withProblem(state, String(problem))
   }
-  return () => stops.forEach((stop) => stop())
 }
+
+/** Shows the system's permission prompt, and starts the radio if allowed. */
+export const allowMicrophone = () => begin(engine.requestPermissions())
+
+/** Looks again, for when the user comes back from the system settings. */
+export async function recheck() {
+  if (!state.snapshot && state.access && micGate(state.access) !== 'ready') {
+    await begin(engine.permissions())
+  }
+}
+
+export const openAppSettings = () => ask(engine.openAppSettings())
 
 /** Joins `channel`, with the passphrase it had earlier in this session. */
 export async function switchChannel(channel: number) {

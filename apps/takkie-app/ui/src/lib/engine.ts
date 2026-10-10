@@ -51,6 +51,17 @@ export type EngineEvent =
 export type Device = { name: string; isDefault: boolean }
 export type Devices = { inputs: Device[]; outputs: Device[] }
 
+export type Grant = 'granted' | 'denied' | 'prompt' | 'prompt-with-rationale'
+
+/** Runtime permissions. On a computer both are always granted. */
+export type Access = { microphone: Grant; notifications: Grant }
+
+export const permissions = () => invoke<Access>('permissions')
+export const requestPermissions = () => invoke<Access>('request_permissions')
+export const openAppSettings = () => invoke<void>('open_app_settings')
+/** Does nothing if the engine already runs. */
+export const startRadio = () => invoke<void>('start_radio')
+
 export const snapshot = () => invoke<Snapshot>('snapshot')
 export const listDevices = () => invoke<Devices>('list_devices')
 export const setTransmitting = (on: boolean) => invoke<void>('set_transmitting', { on })

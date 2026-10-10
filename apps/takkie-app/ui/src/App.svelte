@@ -7,9 +7,10 @@
   import Levels from './lib/Levels.svelte'
   import PassphraseDialog from './lib/PassphraseDialog.svelte'
   import PeerList from './lib/PeerList.svelte'
+  import PermissionGate from './lib/PermissionGate.svelte'
   import PttButton from './lib/PttButton.svelte'
-  import { channelState } from './lib/state'
-  import { app, connect } from './lib/store.svelte'
+  import { channelState, micGate } from './lib/state'
+  import { app, connect, recheck } from './lib/store.svelte'
 
   const version = getVersion()
   let passphrase: PassphraseDialog | undefined = $state()
@@ -21,6 +22,14 @@
     }
   })
 </script>
+
+<svelte:document
+  onvisibilitychange={() => {
+    if (!document.hidden) {
+      void recheck()
+    }
+  }}
+/>
 
 <main>
   <header class="top">
@@ -46,6 +55,8 @@
       channel={app.snapshot.channel}
       isPrivate={app.snapshot.private}
     />
+  {:else if app.access && micGate(app.access) !== 'ready'}
+    <PermissionGate access={app.access} />
   {:else}
     <p class="starting">Starting…</p>
   {/if}
