@@ -10,12 +10,8 @@ pub mod fake;
 pub mod io;
 /// The receiving mixer.
 pub mod mix;
-/// Speaker side: decodes received Opus packets and plays them.
-pub mod rad;
 /// Rate conversion to and from 48 kHz.
 pub mod resample;
-/// Microphone side: encodes 20 ms Opus frames and sends them to peers.
-pub mod sad;
 /// Device loss recovery.
 pub mod session;
 /// Real-time cpal streams.
