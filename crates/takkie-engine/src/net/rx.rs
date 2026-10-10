@@ -1,6 +1,6 @@
-//! The receiving thread: decodes each datagram's header, keeps our
-//! channel's packets and routes them, audio to the mixer and the rest to
-//! the peer table.
+//! The receiving thread: decodes each datagram's header and routes it, our
+//! channel's audio to the mixer and every channel's Hello and Bye to the
+//! peer table.
 
 use std::collections::HashMap;
 use std::io;
@@ -28,7 +28,7 @@ pub struct RxCounters {
     pub received: AtomicU64,
     /// Not a valid takkie header.
     pub invalid: AtomicU64,
-    /// For another channel.
+    /// Audio for another channel.
     pub other_channel: AtomicU64,
     /// Our own, looped back.
     pub own: AtomicU64,
@@ -41,7 +41,7 @@ pub enum Route {
     Invalid,
     /// Sent by us.
     Own,
-    /// Someone on another channel.
+    /// Audio from someone on another channel.
     OtherChannel,
     /// Audio for the mixer.
     Audio(RxPacket),
@@ -58,10 +58,8 @@ pub fn route(datagram: &[u8], from: SocketAddr, me: PeerId, channel: ChannelId) 
     if header.sender == me {
         return Route::Own;
     }
-    if header.channel != channel {
-        return Route::OtherChannel;
-    }
     match header.kind {
+        PacketKind::Audio if header.channel != channel => Route::OtherChannel,
         PacketKind::Audio => Route::Audio(RxPacket {
             sender: header.sender,
             seq: header.seq,
@@ -293,6 +291,16 @@ mod tests {
     fn other_channels_our_own_and_junk_are_dropped() {
         let other = datagram(PacketKind::Audio, 2, 4, Flags::NONE, b"x");
         assert_eq!(route(&other, from(), ME, channel(3)), Route::OtherChannel);
+        let away = datagram(PacketKind::Hello, 2, 4, Flags::NONE, b"Away");
+        assert_eq!(
+            route(&away, from(), ME, channel(3)),
+            Route::Peer(PeerMessage::Hello {
+                sender: PeerId::new(2),
+                name: "Away".into(),
+                channel: channel(4),
+                addr: from(),
+            })
+        );
         let own = datagram(PacketKind::Audio, 1, 3, Flags::NONE, b"x");
         assert_eq!(route(&own, from(), ME, channel(3)), Route::Own);
         assert_eq!(route(b"not takkie", from(), ME, channel(3)), Route::Invalid);

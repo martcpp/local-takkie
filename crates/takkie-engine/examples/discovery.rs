@@ -45,9 +45,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (news, news_out) = crossbeam_channel::unbounded();
     let (audio, _) = crossbeam_channel::unbounded();
     let (events, events_out) = crossbeam_channel::unbounded();
+    let table = Peers::new(Arc::clone(&channel_now), Arc::clone(&targets), PEER_TIMEOUT);
+    let known = table.view();
     let _peers = PeerThread::spawn(
         news_out,
-        Peers::new(Arc::clone(&channel_now), Arc::clone(&targets), PEER_TIMEOUT),
+        table,
         PeerOutputs {
             events,
             mixer: audio.clone(),
@@ -70,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let _browser = Browser::spawn(&discovery, news)?;
     let sender = Arc::new(PacketSender::new(transport, me, channel_now, targets));
-    let _hello = HelloThread::spawn(sender, &name, HELLO_EVERY, static_peers)?;
+    let _hello = HelloThread::spawn(sender, &name, HELLO_EVERY, known, static_peers)?;
 
     let mut out = io::stdout().lock();
     writeln!(
