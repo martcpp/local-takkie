@@ -127,6 +127,7 @@ pub struct Peers {
     table: PeerTable,
     channel: Arc<AtomicU8>,
     targets: Arc<ArcSwap<Vec<SocketAddr>>>,
+    view: Arc<ArcSwap<Vec<Peer>>>,
     timeout: Duration,
 }
 
@@ -143,8 +144,16 @@ impl Peers {
             table: PeerTable::new(),
             channel,
             targets,
+            view: Arc::default(),
             timeout,
         }
+    }
+
+    /// Every peer, republished after each change, for readers on other
+    /// threads.
+    #[must_use]
+    pub fn view(&self) -> Arc<ArcSwap<Vec<Peer>>> {
+        Arc::clone(&self.view)
     }
 
     /// The table.
@@ -168,6 +177,8 @@ impl Peers {
     }
 
     fn publish(&self) {
+        self.view
+            .store(Arc::new(self.table.iter().cloned().collect()));
         let Ok(channel) = ChannelId::try_from(self.channel.load(Relaxed)) else {
             return;
         };
@@ -296,6 +307,7 @@ mod tests {
         peers.handle(hello(PeerId::new(2), 5, 2), now);
         peers.handle(hello(PeerId::new(3), 2, 3), now);
         assert_eq!(**targets.load(), [addr(1), addr(3)]);
+        assert_eq!(peers.view().load().len(), 3);
         channel.store(5, Relaxed);
         peers.expire(now);
         assert_eq!(**targets.load(), [addr(2)]);
