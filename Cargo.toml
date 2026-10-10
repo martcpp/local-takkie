@@ -3,7 +3,7 @@ members = ["crates/*", "xtask"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0-alpha.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/martcpp/local-takkie"
@@ -11,7 +11,7 @@ publish = false
 
 [workspace.dependencies]
 crossbeam-channel = "0.5.17"
-takkie-core = { version = "0.1.1", path = "crates/takkie-core" }
+takkie-core = { path = "crates/takkie-core" }
 thiserror = "2"
 tracing = "0.1"
 

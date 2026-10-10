@@ -2262,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "takkie-core"
-version = "0.1.1"
+version = "0.2.0-alpha.1"
 dependencies = [
  "proptest",
  "thiserror 2.0.21",
@@ -2271,7 +2271,7 @@ dependencies = [
 
 [[package]]
 name = "takkie-engine"
-version = "0.1.1"
+version = "0.2.0-alpha.1"
 dependencies = [
  "arc-swap",
  "cpal",
@@ -2289,7 +2289,7 @@ dependencies = [
 
 [[package]]
 name = "takkie-tui"
-version = "0.1.1"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3213,7 +3213,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.2.0-alpha.1"
 dependencies = [
  "anyhow",
  "semver",
