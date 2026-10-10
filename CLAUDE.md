@@ -33,10 +33,13 @@ Cargo workspace (virtual root):
 - `crates/takkie-core`: pure logic, no I/O (empty for now)
 - `crates/takkie-engine`: audio, codec, network and discovery
 - `crates/takkie-tui`: the `takkie` binary (`takkie --help` for its flags)
-- `xtask`: dev commands (`cargo xtask ci`, `fmt`, `release`)
+- `apps/takkie-app`: the Tauri 2 app (desktop GUI, later Android): Rust in
+  `src-tauri`, Svelte + TypeScript in `ui`. Left out of `cargo xtask ci`.
+- `xtask`: dev commands (`cargo xtask ci`, `gui`, `fmt`, `release`)
 
 ```bash
 cargo xtask ci        # fmt check, clippy -D warnings, tests, cargo-deny: run before every PR
+cargo xtask gui       # the desktop app: frontend check and build, clippy, tests
 cargo xtask fmt       # format everything
 cargo xtask release 0.2.0   # set the version and regenerate CHANGELOG.md
 cargo run -p takkie-tui -- --name alice --channel 2

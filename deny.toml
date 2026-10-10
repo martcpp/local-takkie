@@ -1,7 +1,10 @@
 [advisories]
 yanked = "deny"
 # Each exception names the ticket that removes it. Anything else fails.
-ignore = []
+ignore = [
+    # Build-time macro helper of the GTK3 bindings Tauri 2 uses on Linux. #276
+    { id = "RUSTSEC-2024-0370", reason = "no fix until Tauri drops GTK3 (#276)" },
+]
 
 [licenses]
 allow = [
@@ -18,6 +21,11 @@ allow = [
 confidence-threshold = 0.9
 exceptions = [
     { allow = ["MPL-2.0"], crate = "option-ext" },
+    # Servo's CSS parser, pulled in by Tauri and used unmodified.
+    { allow = ["MPL-2.0"], crate = "cssparser" },
+    { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+    { allow = ["MPL-2.0"], crate = "dtoa-short" },
+    { allow = ["MPL-2.0"], crate = "selectors" },
 ]
 
 [bans]

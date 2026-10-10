@@ -69,9 +69,9 @@ jobs:
           packages: libasound2-dev
           version: 1.0
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude takkie-app --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude takkie-app --locked
       - name: Build takkie
         run: cargo build -p takkie-tui --locked
 
