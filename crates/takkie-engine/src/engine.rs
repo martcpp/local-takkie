@@ -135,6 +135,8 @@ pub struct PeerInfo {
     pub last_seen: Instant,
     /// On our channel, but their packets don't match our passphrase.
     pub mismatch: bool,
+    /// We chose not to hear them.
+    pub muted: bool,
 }
 
 /// Something the UI should react to.
@@ -259,6 +261,7 @@ impl Shared {
             talking: self.mix.talking.load().contains(&peer.id),
             last_seen: peer.last_seen,
             mismatch: self.mismatched.load().contains(&peer.id),
+            muted: self.mix.controls.is_peer_muted(peer.id),
         }
     }
 
@@ -488,6 +491,11 @@ impl Engine {
         self.shared.mix.controls.set_muted(muted);
     }
 
+    /// Silences one peer for us only, until they or we restart.
+    pub fn set_peer_muted(&self, peer: PeerId, muted: bool) {
+        self.shared.mix.controls.set_peer_muted(peer, muted);
+    }
+
     /// Playback volume: 1.0 is unchanged, clamped to 0.0..=2.0.
     pub fn set_volume(&self, volume: f32) {
         self.shared.mix.controls.set_volume(volume);
@@ -627,7 +635,10 @@ impl<O: DeviceOpener> Control<O> {
         let event = match event {
             PeerEvent::Joined(id) => find(id).map(EngineEvent::PeerJoined),
             PeerEvent::Updated(id) => find(id).map(EngineEvent::PeerUpdated),
-            PeerEvent::Left(id) => Some(EngineEvent::PeerLeft(id)),
+            PeerEvent::Left(id) => {
+                self.shared.mix.controls.set_peer_muted(id, false);
+                Some(EngineEvent::PeerLeft(id))
+            }
         };
         if let Some(event) = event {
             match &event {
@@ -973,6 +984,45 @@ mod tests {
         );
         let b_heard = hears_only(&b.speaker, 440.0);
         assert!(close(b_heard, 440.0), "B heard {b_heard:?} after D joined");
+    }
+
+    #[test]
+    fn muting_one_peer_leaves_the_other_audible() {
+        let network = MemoryNetwork::new();
+        let tone = AMPLITUDE / 2.0_f32.sqrt();
+        let b = node(&network, "B", Vec::new());
+        let a = node_on(&network, "A", 3, 440.0, vec![b.addr]);
+        let c = node_on(&network, "C", 3, 1_000.0, vec![b.addr]);
+        let c_id = c.engine.id();
+        let close = |(level, pitch): (f32, f32)| {
+            (level - tone).abs() / tone < 0.3 && (pitch - 440.0).abs() / 440.0 < 0.05
+        };
+
+        a.engine.set_transmitting(true);
+        c.engine.set_transmitting(true);
+        let both = settle(&b.speaker, |level| level > tone * 1.2);
+        assert!(both > tone * 1.2, "B heard {both}, wanted two voices");
+
+        b.engine.set_peer_muted(c_id, true);
+        let heard = hears_only(&b.speaker, 440.0);
+        assert!(close(heard), "B heard {heard:?}, wanted A's 440 Hz alone");
+        let muted = b.engine.snapshot();
+        let muted: Vec<bool> = muted
+            .peers
+            .iter()
+            .map(|peer| peer.muted && peer.talking)
+            .collect();
+        assert_eq!(muted.iter().filter(|m| **m).count(), 1);
+        assert_eq!(muted.len(), 2);
+
+        b.engine.set_peer_muted(c_id, false);
+        let both = settle(&b.speaker, |level| level > tone * 1.2);
+        assert!(both > tone * 1.2, "B heard {both} after unmuting");
+
+        b.engine.set_peer_muted(c_id, true);
+        drop(c);
+        wait_for(&b.events, |e| *e == EngineEvent::PeerLeft(c_id));
+        assert!(!b.engine.shared.mix.controls.is_peer_muted(c_id));
     }
 
     #[test]

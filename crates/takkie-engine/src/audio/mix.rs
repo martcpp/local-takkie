@@ -71,6 +71,7 @@ pub struct MixControls {
     volume: AtomicU32,
     muted: AtomicBool,
     half_duplex: AtomicBool,
+    muted_peers: ArcSwap<Vec<PeerId>>,
 }
 
 impl Default for MixControls {
@@ -79,6 +80,7 @@ impl Default for MixControls {
             volume: AtomicU32::new(1.0_f32.to_bits()),
             muted: AtomicBool::new(false),
             half_duplex: AtomicBool::new(true),
+            muted_peers: ArcSwap::default(),
         }
     }
 }
@@ -121,6 +123,23 @@ impl MixControls {
     #[must_use]
     pub fn is_half_duplex(&self) -> bool {
         self.half_duplex.load(Relaxed)
+    }
+
+    /// Leaves one sender out of the mix, or puts them back.
+    pub fn set_peer_muted(&self, peer: PeerId, muted: bool) {
+        self.muted_peers.rcu(|peers| {
+            let mut peers: Vec<PeerId> = peers.iter().copied().filter(|id| *id != peer).collect();
+            if muted {
+                peers.push(peer);
+            }
+            peers
+        });
+    }
+
+    /// Whether this sender is left out of the mix.
+    #[must_use]
+    pub fn is_peer_muted(&self, peer: PeerId) -> bool {
+        self.muted_peers.load().contains(&peer)
     }
 }
 
@@ -254,12 +273,16 @@ impl Mixer {
         out.fill(0.0);
         let frame = &mut self.frame;
         let counters = &self.counters;
-        for Talker {
-            jitter,
-            decoder,
-            concealed,
-            talking,
-        } in self.talkers.values_mut()
+        let muted_peers = self.controls.muted_peers.load();
+        for (
+            id,
+            Talker {
+                jitter,
+                decoder,
+                concealed,
+                talking,
+            },
+        ) in &mut self.talkers
         {
             let played = match jitter.pop_next(now) {
                 Playout::NotReady => {
@@ -285,10 +308,10 @@ impl Mixer {
                 }
                 Playout::Plc { .. } => conceal(decoder, concealed, frame, counters),
             };
-            if played {
-                mix_into(out, frame);
-            } else {
+            if !played {
                 *talking = false;
+            } else if !muted_peers.contains(id) {
+                mix_into(out, frame);
             }
         }
         apply_gain(out, self.controls.volume());
@@ -800,6 +823,35 @@ mod tests {
         assert_eq!(mixer.talking().len(), 2);
         assert_eq!(mixer.counters().silenced.load(Relaxed), 0);
         assert!(mixer.controls().is_muted());
+    }
+
+    #[test]
+    fn a_muted_peer_is_left_out_of_the_mix_but_still_decoded() {
+        let mut both = Mixer::new();
+        let two = rms(&chorus(&mut both, 2, 10, false)[5]);
+        let mut alone = Mixer::new();
+        let one = rms(&chorus(&mut alone, 1, 10, false)[5]);
+
+        let mut mixer = Mixer::new();
+        mixer.controls().set_peer_muted(PeerId::new(2), true);
+        let played = chorus(&mut mixer, 2, 10, false);
+        assert!((rms(&played[5]) - one).abs() < 1e-6);
+        assert!((two - one).abs() > 0.01);
+        assert_eq!(mixer.talking().len(), 2);
+        assert_eq!(mixer.counters().silenced.load(Relaxed), 0);
+    }
+
+    #[test]
+    fn muting_a_peer_twice_and_unmuting_once_leaves_them_unmuted() {
+        let controls = MixControls::default();
+        let (kitchen, attic) = (PeerId::new(1), PeerId::new(2));
+        controls.set_peer_muted(kitchen, true);
+        controls.set_peer_muted(kitchen, true);
+        controls.set_peer_muted(attic, true);
+        assert!(controls.is_peer_muted(kitchen) && controls.is_peer_muted(attic));
+        controls.set_peer_muted(kitchen, false);
+        assert!(!controls.is_peer_muted(kitchen));
+        assert!(controls.is_peer_muted(attic));
     }
 
     #[test]
