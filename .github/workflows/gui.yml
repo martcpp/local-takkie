@@ -1,0 +1,75 @@
+name: GUI
+
+# The desktop app needs Node and, on Linux, WebKitGTK, so it has its own
+# workflow that only runs when something it is built from changes.
+on:
+  pull_request:
+    branches: [develop, main]
+    paths: &built-from
+      - "apps/**"
+      - "crates/takkie-core/**"
+      - "crates/takkie-engine/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/gui.yml"
+  push:
+    branches: [develop, main]
+    paths: *built-from
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+# Actions are pinned to commits; Dependabot keeps the pins current.
+jobs:
+  gui:
+    name: GUI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: clippy
+      # Its own cache: the Tauri build shares little with the terminal app's.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: gui
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
+      - name: Install ALSA and WebKitGTK headers
+        if: runner.os == 'Linux'
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: libasound2-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+          version: 1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/takkie-app/ui/package-lock.json
+      - name: Install frontend packages
+        working-directory: apps/takkie-app/ui
+        run: npm ci
+      - name: Check frontend types
+        working-directory: apps/takkie-app/ui
+        run: npm run check
+      - name: Build frontend
+        working-directory: apps/takkie-app/ui
+        run: npm run build
+      - name: Clippy
+        run: cargo clippy -p takkie-app --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test -p takkie-app --locked
