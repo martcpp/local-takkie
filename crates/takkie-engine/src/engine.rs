@@ -681,19 +681,29 @@ mod tests {
     }
 
     fn node(network: &MemoryNetwork, name: &str, static_peers: Vec<SocketAddr>) -> Node {
+        node_on(network, name, 3, 440.0, static_peers)
+    }
+
+    fn node_on(
+        network: &MemoryNetwork,
+        name: &str,
+        channel: u8,
+        frequency: f32,
+        static_peers: Vec<SocketAddr>,
+    ) -> Node {
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
         let transport = Arc::new(network.bind(0));
         let addr = transport.local_addr();
         let fakes = Fakes {
             mic: Signal::Sine {
-                frequency: 440.0,
+                frequency,
                 amplitude: AMPLITUDE,
             },
             speaker: speaker.clone(),
         };
         let config = EngineConfig {
             display_name: name.into(),
-            channel: ChannelId::try_from(3).unwrap(),
+            channel: ChannelId::try_from(channel).unwrap(),
             static_peers,
             ..EngineConfig::default()
         };
@@ -721,6 +731,29 @@ mod tests {
             let heard = level(speaker);
             if done(heard) || Instant::now() >= deadline {
                 return heard;
+            }
+            after(50);
+        }
+    }
+
+    fn pitch(speaker: &LiveSink) -> f32 {
+        let heard = speaker.last(RATE as usize / 5);
+        let crossings = heard
+            .windows(2)
+            .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+            .count();
+        crossings as f32 / 2.0 / (heard.len() as f32 / RATE as f32)
+    }
+
+    fn hears_only(speaker: &LiveSink, frequency: f32) -> (f32, f32) {
+        let tone = AMPLITUDE / 2.0_f32.sqrt();
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let (level, pitch) = (level(speaker), pitch(speaker));
+            let right =
+                (level - tone).abs() / tone < 0.3 && (pitch - frequency).abs() / frequency < 0.05;
+            if right || Instant::now() >= deadline {
+                return (level, pitch);
             }
             after(50);
         }
@@ -808,6 +841,42 @@ mod tests {
         b.engine.set_channel(ChannelId::try_from(3).unwrap());
         let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
+    }
+
+    #[test]
+    fn two_groups_on_different_channels_never_hear_each_other() {
+        let network = MemoryNetwork::new();
+        let tone = AMPLITUDE / 2.0_f32.sqrt();
+        let a = node_on(&network, "A", 3, 440.0, Vec::new());
+        let b = node_on(&network, "B", 3, 440.0, vec![a.addr]);
+        let c = node_on(&network, "C", 5, 1_000.0, vec![a.addr, b.addr]);
+        let d = node_on(&network, "D", 5, 1_000.0, vec![a.addr, b.addr, c.addr]);
+        let close = |(level, pitch): (f32, f32), frequency: f32| {
+            (level - tone).abs() / tone < 0.3 && (pitch - frequency).abs() / frequency < 0.05
+        };
+
+        a.engine.set_transmitting(true);
+        c.engine.set_transmitting(true);
+        let b_heard = hears_only(&b.speaker, 440.0);
+        let d_heard = hears_only(&d.speaker, 1_000.0);
+        assert!(
+            close(b_heard, 440.0),
+            "B heard {b_heard:?}, wanted A's 440 Hz alone"
+        );
+        assert!(
+            close(d_heard, 1_000.0),
+            "D heard {d_heard:?}, wanted C's 1000 Hz alone"
+        );
+        assert_eq!(b.engine.snapshot().peers.len(), 3);
+
+        d.engine.set_channel(ChannelId::try_from(3).unwrap());
+        let d_heard = hears_only(&d.speaker, 440.0);
+        assert!(
+            close(d_heard, 440.0),
+            "D on channel 3 heard {d_heard:?}, wanted A's 440 Hz"
+        );
+        let b_heard = hears_only(&b.speaker, 440.0);
+        assert!(close(b_heard, 440.0), "B heard {b_heard:?} after D joined");
     }
 
     #[test]
