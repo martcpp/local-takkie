@@ -13,6 +13,7 @@ publish = false
 crossbeam-channel = "0.5.17"
 takkie-core = { version = "0.1.1", path = "crates/takkie-core" }
 thiserror = "2"
+tracing = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -127,7 +127,7 @@ impl RxThread {
                         Ok(Some(received)) => received,
                         Ok(None) => continue,
                         Err(error) => {
-                            log::warn!("receive failed: {error}");
+                            tracing::warn!("receive failed: {error}");
                             thread::sleep(Duration::from_millis(100));
                             continue;
                         }

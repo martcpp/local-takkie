@@ -411,14 +411,14 @@ impl MixThread {
                         match input {
                             MixInput::Packet(packet) => {
                                 if let Err(error) = mixer.receive(packet, Instant::now()) {
-                                    log::warn!("dropped a packet: {error}");
+                                    tracing::warn!("dropped a packet: {error}");
                                 }
                             }
                             MixInput::Left(sender) => mixer.remove(sender),
                         }
                     }
                     if let Err(error) = pacer.fill(&mut mixer, sink.as_mut(), Instant::now()) {
-                        log::error!("mix stopped: {error}");
+                        tracing::error!("mix stopped: {error}");
                         return;
                     }
                     let waiting = mixer.buffered() * 20 + sink.queued() * 1_000 / rate;
