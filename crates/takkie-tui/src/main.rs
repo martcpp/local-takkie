@@ -61,6 +61,7 @@ fn main() -> ExitCode {
         display_name: name.clone(),
         port: cli.port,
         channel: current.channel(),
+        passphrase: None,
         input_device: current.input_device.clone(),
         output_device: current.output_device.clone(),
         static_peers: cli.peers.clone(),

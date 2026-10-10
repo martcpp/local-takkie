@@ -312,7 +312,7 @@ fn run_app(
                 }
                 Some(Key::Channel(channel)) if channel != snapshot.channel => {
                     set_talking(app, engine, false);
-                    engine.set_channel(channel);
+                    engine.set_channel(channel, None);
                     app.log.push(format!("📻 Channel {channel}"));
                 }
                 Some(Key::Channel(_)) | None => {}
@@ -953,6 +953,7 @@ mod tests {
         EngineSnapshot {
             id: PeerId::new(1),
             channel: ChannelId::try_from(2).unwrap(),
+            private: false,
             transmitting: false,
             muted: false,
             volume: 1.0,

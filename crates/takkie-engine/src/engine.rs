@@ -1,19 +1,19 @@
 //! The API every UI uses. One [`Engine`] owns the audio, network and
 //! discovery threads, and dropping it stops them all.
 
-use std::hash::{BuildHasher, RandomState};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use crossbeam_channel::{Receiver, Sender, never, select, unbounded};
 use takkie_core::dsp::Level;
+use takkie_core::key::{ChannelKey, KeyError};
 use takkie_core::peers::{Peer, PeerEvent};
-use takkie_core::{ChannelId, PeerId};
+use takkie_core::{ChannelId, Passphrase, PeerId};
 use thiserror::Error;
 
 use crate::audio::devices::{DeviceList, Direction, list_devices};
@@ -52,7 +52,7 @@ impl Default for Tuning {
 const TALK_CHECK_EVERY: Duration = Duration::from_millis(50);
 
 /// How to start an [`Engine`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct EngineConfig {
     /// The name peers see.
     pub display_name: String,
@@ -60,6 +60,9 @@ pub struct EngineConfig {
     pub port: u16,
     /// The channel to join.
     pub channel: ChannelId,
+    /// Makes the channel private: only peers with the same passphrase hear
+    /// us or are heard. `None` is an open channel.
+    pub passphrase: Option<Passphrase>,
     /// Microphone name, or `None` for the system default.
     pub input_device: Option<String>,
     /// Speaker name, or `None` for the system default.
@@ -76,6 +79,7 @@ impl Default for EngineConfig {
             display_name: "takkie".into(),
             port: 0,
             channel: ChannelId::MIN,
+            passphrase: None,
             input_device: None,
             output_device: None,
             static_peers: Vec::new(),
@@ -106,6 +110,12 @@ pub enum EngineError {
     /// An engine thread couldn't start.
     #[error("couldn't start an engine thread: {0}")]
     Thread(#[source] io::Error),
+    /// The channel key couldn't be derived from the passphrase.
+    #[error(transparent)]
+    Key(#[from] KeyError),
+    /// The OS gave no random bytes for our id.
+    #[error("couldn't get random bytes from the OS: {0}")]
+    Random(getrandom::Error),
 }
 
 /// Another takkie, as the UI shows it.
@@ -163,6 +173,10 @@ pub struct EngineStats {
     pub packets_received: u64,
     /// Received datagrams that weren't takkie packets.
     pub packets_invalid: u64,
+    /// Packets on our channel that didn't match our passphrase.
+    pub packets_mismatched: u64,
+    /// Sealed packets refused because they were seen before.
+    pub packets_replayed: u64,
     /// Lost frames rebuilt from FEC.
     pub frames_recovered: u64,
     /// Lost frames guessed by concealment.
@@ -182,6 +196,8 @@ pub struct EngineSnapshot {
     pub id: PeerId,
     /// Our channel.
     pub channel: ChannelId,
+    /// The channel has a passphrase.
+    pub private: bool,
     /// Push-to-talk is held.
     pub transmitting: bool,
     /// Playback is muted.
@@ -201,12 +217,22 @@ pub struct EngineSnapshot {
 }
 
 enum Command {
-    SetChannel(ChannelId),
+    SetChannel(ChannelId, Option<Passphrase>),
+}
+
+fn derive(
+    passphrase: Option<&Passphrase>,
+    channel: ChannelId,
+) -> Result<Option<Arc<ChannelKey>>, KeyError> {
+    passphrase
+        .map(|passphrase| ChannelKey::derive(passphrase, channel).map(Arc::new))
+        .transpose()
 }
 
 #[derive(Clone)]
 struct Shared {
     channel: Arc<AtomicU8>,
+    key: Arc<ArcSwapOption<ChannelKey>>,
     transmitting: Arc<AtomicBool>,
     level: Arc<LevelMeter>,
     mix: MixShared,
@@ -293,7 +319,11 @@ impl Engine {
         mdns: bool,
         tuning: Tuning,
     ) -> Result<(Self, Receiver<EngineEvent>), EngineError> {
-        let id = new_id();
+        let id = new_id()?;
+        let key = Arc::new(ArcSwapOption::new(derive(
+            config.passphrase.as_ref(),
+            config.channel,
+        )?));
         let port = transport.local_addr().port();
         let channel = Arc::new(AtomicU8::new(config.channel.get()));
         let targets = Arc::new(ArcSwap::from_pointee(Vec::new()));
@@ -323,10 +353,11 @@ impl Engine {
             },
         )
         .map_err(EngineError::Thread)?;
-        let rx = RxThread::spawn(
+        let rx = RxThread::spawn_keyed(
             Arc::clone(&transport),
             id,
             Arc::clone(&channel),
+            Arc::clone(&key),
             RxOutputs {
                 audio: packets_in,
                 peers: news_in.clone(),
@@ -334,16 +365,15 @@ impl Engine {
         )
         .map_err(EngineError::Thread)?;
         let (tx_events, tx_out) = unbounded();
-        let sender = Arc::new(PacketSender::new(
-            transport,
-            id,
-            Arc::clone(&channel),
-            targets,
-        ));
+        let sender = Arc::new(
+            PacketSender::new(transport, id, Arc::clone(&channel), targets)
+                .with_key(Arc::clone(&key)),
+        );
         let send = SendThread::spawn(tx_out, Arc::clone(&sender)).map_err(EngineError::Thread)?;
 
         let shared = Shared {
             channel,
+            key,
             transmitting,
             level,
             mix,
@@ -436,10 +466,11 @@ impl Engine {
         self.shared.transmitting.store(on, Relaxed);
     }
 
-    /// Moves to another channel.
-    pub fn set_channel(&self, channel: ChannelId) {
+    /// Moves to `channel`, private if `passphrase` is given and open if
+    /// not. The same channel with another passphrase is fine too.
+    pub fn set_channel(&self, channel: ChannelId, passphrase: Option<Passphrase>) {
         if let Some(commands) = &self.commands {
-            let _ = commands.send(Command::SetChannel(channel));
+            let _ = commands.send(Command::SetChannel(channel, passphrase));
         }
     }
 
@@ -472,6 +503,7 @@ impl Engine {
         EngineSnapshot {
             id: self.id,
             channel: ChannelId::try_from(shared.channel.load(Relaxed)).unwrap_or(ChannelId::MIN),
+            private: shared.key.load().is_some(),
             transmitting: shared.transmitting.load(Relaxed),
             muted: shared.mix.controls.is_muted(),
             volume: shared.mix.controls.volume(),
@@ -489,6 +521,8 @@ impl Engine {
                 send_errors: shared.sent.errors.load(Relaxed),
                 packets_received: shared.received.received.load(Relaxed),
                 packets_invalid: shared.received.invalid.load(Relaxed),
+                packets_mismatched: shared.received.mismatched.load(Relaxed),
+                packets_replayed: shared.received.replayed.load(Relaxed),
                 frames_recovered: mix.recovered.load(Relaxed),
                 frames_concealed: mix.concealed.load(Relaxed),
                 frames_silenced: mix.silenced.load(Relaxed),
@@ -526,8 +560,16 @@ impl<O: DeviceOpener> Control<O> {
         loop {
             select! {
                 recv(commands) -> command => match command {
-                    Ok(Command::SetChannel(channel)) => {
-                        tracing::info!(%channel, "channel changed");
+                    Ok(Command::SetChannel(channel, passphrase)) => {
+                        let key = match derive(passphrase.as_ref(), channel) {
+                            Ok(key) => key,
+                            Err(error) => {
+                                tracing::error!("staying where we are: {error}");
+                                continue;
+                            }
+                        };
+                        tracing::info!(%channel, private = key.is_some(), "channel changed");
+                        self.shared.key.store(key);
                         self.shared.channel.store(channel.get(), Relaxed);
                         if let Some((_, discovery)) = &mut self.mdns
                             && let Err(error) = discovery.set_channel(channel)
@@ -626,9 +668,11 @@ fn audio_event(event: AudioEvent) -> EngineEvent {
     }
 }
 
-fn new_id() -> PeerId {
-    // RandomState is seeded by the OS, so engines started together still differ.
-    PeerId::new(RandomState::new().hash_one(SystemTime::now()))
+// Half of every nonce, so it has to come from the OS random generator.
+fn new_id() -> Result<PeerId, EngineError> {
+    getrandom::u64()
+        .map(PeerId::new)
+        .map_err(EngineError::Random)
 }
 
 #[cfg(test)]
@@ -691,6 +735,21 @@ mod tests {
         frequency: f32,
         static_peers: Vec<SocketAddr>,
     ) -> Node {
+        node_with(network, name, channel, frequency, None, static_peers)
+    }
+
+    fn secret(passphrase: &str) -> Option<Passphrase> {
+        Some(Passphrase::new(passphrase.to_owned()).unwrap())
+    }
+
+    fn node_with(
+        network: &MemoryNetwork,
+        name: &str,
+        channel: u8,
+        frequency: f32,
+        passphrase: Option<&str>,
+        static_peers: Vec<SocketAddr>,
+    ) -> Node {
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
         let transport = Arc::new(network.bind(0));
         let addr = transport.local_addr();
@@ -704,6 +763,7 @@ mod tests {
         let config = EngineConfig {
             display_name: name.into(),
             channel: ChannelId::try_from(channel).unwrap(),
+            passphrase: passphrase.and_then(secret),
             static_peers,
             ..EngineConfig::default()
         };
@@ -808,11 +868,11 @@ mod tests {
         assert!(b.engine.snapshot().speaker.rms < 0.01);
 
         b.engine.set_muted(false);
-        b.engine.set_channel(ChannelId::try_from(4).unwrap());
+        b.engine.set_channel(ChannelId::try_from(4).unwrap(), None);
         let heard = settle(&b.speaker, |heard| heard < 0.01);
         assert!(heard < 0.01, "B on channel 4 heard {heard}");
 
-        b.engine.set_channel(ChannelId::try_from(3).unwrap());
+        b.engine.set_channel(ChannelId::try_from(3).unwrap(), None);
         let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
 
@@ -830,7 +890,7 @@ mod tests {
         let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "B heard {heard} before switching");
 
-        b.engine.set_channel(ChannelId::try_from(4).unwrap());
+        b.engine.set_channel(ChannelId::try_from(4).unwrap(), None);
         after(3_000);
         let heard = level(&b.speaker);
         assert!(heard < 0.01, "B on channel 4 heard {heard}");
@@ -838,7 +898,7 @@ mod tests {
         assert_eq!(away.peers.len(), 1);
         assert_eq!(away.peers[0].channel.get(), 3);
 
-        b.engine.set_channel(ChannelId::try_from(3).unwrap());
+        b.engine.set_channel(ChannelId::try_from(3).unwrap(), None);
         let heard = settle(&b.speaker, |heard| heard > 0.1);
         assert!(heard > 0.1, "B back on channel 3 heard {heard}");
     }
@@ -869,7 +929,7 @@ mod tests {
         );
         assert_eq!(b.engine.snapshot().peers.len(), 3);
 
-        d.engine.set_channel(ChannelId::try_from(3).unwrap());
+        d.engine.set_channel(ChannelId::try_from(3).unwrap(), None);
         let d_heard = hears_only(&d.speaker, 440.0);
         assert!(
             close(d_heard, 440.0),
@@ -877,6 +937,73 @@ mod tests {
         );
         let b_heard = hears_only(&b.speaker, 440.0);
         assert!(close(b_heard, 440.0), "B heard {b_heard:?} after D joined");
+    }
+
+    #[test]
+    fn only_the_same_passphrase_hears_or_is_heard() {
+        let network = MemoryNetwork::new();
+        let tone = AMPLITUDE / 2.0_f32.sqrt();
+        let alpha = Some("alpha");
+        let a = node_with(&network, "A", 3, 440.0, alpha, Vec::new());
+        let b = node_with(&network, "B", 3, 440.0, alpha, vec![a.addr]);
+        let open = node_with(&network, "Open", 3, 1_000.0, None, vec![a.addr, b.addr]);
+        let other = node_with(
+            &network,
+            "Other",
+            3,
+            1_000.0,
+            Some("beta"),
+            vec![a.addr, b.addr, open.addr],
+        );
+        let alone = |(level, pitch): (f32, f32)| {
+            (level - tone).abs() / tone < 0.3 && (pitch - 440.0).abs() / 440.0 < 0.05
+        };
+
+        a.engine.set_transmitting(true);
+        let heard = hears_only(&b.speaker, 440.0);
+        assert!(alone(heard), "B heard {heard:?}, wanted A alone");
+        for outsider in [&open, &other] {
+            let heard = settle(&outsider.speaker, |heard| heard < 0.01);
+            assert!(heard < 0.01, "an outsider heard {heard}");
+        }
+
+        open.engine.set_transmitting(true);
+        other.engine.set_transmitting(true);
+        after(600);
+        let heard = hears_only(&b.speaker, 440.0);
+        assert!(alone(heard), "B heard {heard:?} while outsiders talked");
+
+        let inside = b.engine.snapshot();
+        assert!(inside.private);
+        assert_eq!(inside.peers.len(), 3);
+        assert!(inside.stats.packets_mismatched > 0);
+        assert!(!open.engine.snapshot().private);
+    }
+
+    #[test]
+    fn a_channel_can_go_private_and_open_again_while_running() {
+        let network = MemoryNetwork::new();
+        let b = node(&network, "B", Vec::new());
+        let a = node(&network, "A", vec![b.addr]);
+        let three = ChannelId::try_from(3).unwrap();
+        a.engine.set_transmitting(true);
+        let heard = settle(&b.speaker, |heard| heard > 0.1);
+        assert!(heard > 0.1, "open: B heard {heard}");
+
+        a.engine.set_channel(three, secret("alpha"));
+        let heard = settle(&b.speaker, |heard| heard < 0.01);
+        assert!(heard < 0.01, "A private, B open: B heard {heard}");
+
+        b.engine.set_channel(three, secret("alpha"));
+        let heard = settle(&b.speaker, |heard| heard > 0.1);
+        assert!(heard > 0.1, "both private: B heard {heard}");
+        assert!(b.engine.snapshot().private);
+
+        a.engine.set_channel(three, None);
+        b.engine.set_channel(three, None);
+        let heard = settle(&b.speaker, |heard| heard > 0.1);
+        assert!(heard > 0.1, "open again: B heard {heard}");
+        assert!(!b.engine.snapshot().private);
     }
 
     #[test]

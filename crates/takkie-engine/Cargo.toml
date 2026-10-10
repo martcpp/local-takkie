@@ -10,6 +10,7 @@ publish.workspace = true
 arc-swap = "1"
 cpal = "0.17.0"
 crossbeam-channel = { workspace = true }
+getrandom = "0.3"
 if-addrs = "0.15"
 mdns-sd = "0.21"
 opus = "0.4"

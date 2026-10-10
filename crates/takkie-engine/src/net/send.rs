@@ -9,9 +9,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use crossbeam_channel::Receiver;
+use takkie_core::key::ChannelKey;
 use takkie_core::protocol::{Flags, HEADER_LEN, Header, PacketKind};
+use takkie_core::seal::seal_packet;
 use takkie_core::{ChannelId, PeerId, Seq};
 
 use super::transport::Transport;
@@ -55,6 +57,7 @@ pub struct PacketSender {
     channel: Arc<AtomicU8>,
     seq: AtomicU32,
     peers: Arc<ArcSwap<Vec<SocketAddr>>>,
+    key: Arc<ArcSwapOption<ChannelKey>>,
     counters: Arc<SendCounters>,
 }
 
@@ -73,8 +76,17 @@ impl PacketSender {
             channel,
             seq: AtomicU32::new(0),
             peers,
+            key: Arc::default(),
             counters: Arc::default(),
         }
+    }
+
+    /// Seals every packet with whatever key is in `key` when it's sent;
+    /// while it holds none, packets go out in the clear.
+    #[must_use]
+    pub fn with_key(mut self, key: Arc<ArcSwapOption<ChannelKey>>) -> Self {
+        self.key = key;
+        self
     }
 
     /// Send counts, shared.
@@ -112,25 +124,20 @@ impl PacketSender {
         let Ok(channel) = ChannelId::try_from(self.channel.load(Relaxed)) else {
             return;
         };
-        let mut datagram = [0_u8; MAX_DATAGRAM];
-        let len = HEADER_LEN + payload.len();
-        let Some((header, body)) = datagram
-            .get_mut(..len)
-            .and_then(|packet| packet.split_first_chunk_mut::<HEADER_LEN>())
-        else {
-            self.counters.errors.fetch_add(1, Relaxed);
-            return;
-        };
-        Header {
+        let header = Header {
             kind,
             channel,
             flags,
             sender: self.me,
             seq: Seq::new(self.seq.fetch_add(1, Relaxed)),
             timestamp,
-        }
-        .encode(header);
-        body.copy_from_slice(payload);
+        };
+        let mut datagram = [0_u8; MAX_DATAGRAM];
+        let Some(len) = write_packet(self.key.load().as_deref(), header, payload, &mut datagram)
+        else {
+            self.counters.errors.fetch_add(1, Relaxed);
+            return;
+        };
         for peer in to {
             match self.transport.send_to(&datagram[..len], peer) {
                 Ok(()) => {
@@ -141,6 +148,22 @@ impl PacketSender {
             }
         }
     }
+}
+
+fn write_packet(
+    key: Option<&ChannelKey>,
+    header: Header,
+    payload: &[u8],
+    out: &mut [u8],
+) -> Option<usize> {
+    if let Some(key) = key {
+        return seal_packet(key, header, payload, out).ok();
+    }
+    let len = HEADER_LEN + payload.len();
+    let (head, body) = out.get_mut(..len)?.split_first_chunk_mut::<HEADER_LEN>()?;
+    header.encode(head);
+    body.copy_from_slice(payload);
+    Some(len)
 }
 
 /// The running send thread. Dropping it stops the thread.
@@ -329,6 +352,35 @@ mod tests {
             .send(PacketKind::Audio, Flags::NONE, 0, &[0; 4_000]);
         assert_eq!(s.sender.counters().errors.load(Relaxed), 1);
         assert!(recv(&s.others[0]).is_none());
+    }
+
+    #[test]
+    fn with_a_key_every_packet_is_sealed_and_opens_again() {
+        use takkie_core::seal::{TAG_LEN, open_packet};
+
+        let s = setup(1);
+        s.peers.store(Arc::new(vec![s.others[0].local_addr()]));
+        let secret = ChannelKey::from_bytes([7; 32]);
+        let shared = Arc::new(ArcSwapOption::from_pointee(secret.clone()));
+        let sender = s.sender.with_key(Arc::clone(&shared));
+
+        sender.send(PacketKind::Audio, Flags::END_OF_TRANSMISSION, 960, b"opus");
+        let mut buf = [0; 2048];
+        let (len, _) = s.others[0].recv_from(&mut buf).unwrap().unwrap();
+        assert_eq!(len, HEADER_LEN + 4 + TAG_LEN);
+        assert_ne!(&buf[HEADER_LEN..HEADER_LEN + 4], b"opus");
+        let (header, payload) = open_packet(&secret, &mut buf[..len]).unwrap();
+        assert_eq!(payload, b"opus");
+        assert!(
+            header
+                .flags
+                .contains(Flags::ENCRYPTED | Flags::END_OF_TRANSMISSION)
+        );
+
+        shared.store(None);
+        sender.send(PacketKind::Hello, Flags::NONE, 0, b"Kitchen");
+        let (len, _) = s.others[0].recv_from(&mut buf).unwrap().unwrap();
+        assert_eq!(&buf[HEADER_LEN..len], b"Kitchen");
     }
 
     #[test]

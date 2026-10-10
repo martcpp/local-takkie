@@ -97,7 +97,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     writeln!(out, "mute {}", if muted { "ON" } else { "off" })?;
                 }
                 Key::Channel(channel) => {
-                    engine.set_channel(channel);
+                    engine.set_channel(channel, None);
                     writeln!(out, "channel {channel}")?;
                 }
                 Key::Quit => return Ok(()),
