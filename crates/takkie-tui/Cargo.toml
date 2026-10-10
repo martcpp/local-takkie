@@ -15,10 +15,9 @@ anyhow = "1"
 chrono = "0.4"
 clap = { version = "4.6", features = ["derive", "env"] }
 crossbeam-channel = { workspace = true }
-crossterm = "0.29"
 directories = "6"
 gethostname = "1.1"
-ratatui = "0.28"
+ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
 takkie-core = { workspace = true }
 takkie-engine = { path = "../takkie-engine" }
