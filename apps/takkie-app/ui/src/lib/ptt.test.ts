@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 
-import { blocked, spaceTalks } from './ptt'
+import { blocked, buzz, spaceTalks } from './ptt'
 
 const element = (tagName: string, inDialog = false, isContentEditable = false) => ({
   tagName,
@@ -31,6 +31,11 @@ test('space types while typing', () => {
 test('space does nothing to the radio while a dialog is open', () => {
   expect(spaceTalks('Space', element('BUTTON', true))).toBe(false)
   expect(spaceTalks('Space', element('INPUT', true))).toBe(false)
+})
+
+test('starting buzzes longer than stopping, so they feel different', () => {
+  expect(buzz(true)).toBeGreaterThan(buzz(false))
+  expect(buzz(false)).toBeGreaterThan(0)
 })
 
 test('talking is blocked without a microphone', () => {

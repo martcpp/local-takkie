@@ -59,6 +59,8 @@ export type Access = { microphone: Grant; notifications: Grant }
 export const permissions = () => invoke<Access>('permissions')
 export const requestPermissions = () => invoke<Access>('request_permissions')
 export const openAppSettings = () => invoke<void>('open_app_settings')
+/** Only does something on a phone. */
+export const setKeepScreenOn = (on: boolean) => invoke<void>('set_keep_screen_on', { on })
 /** Does nothing if the engine already runs. */
 export const startRadio = () => invoke<void>('start_radio')
 export const stopRadio = () => invoke<void>('stop_radio')

@@ -222,6 +222,51 @@ pub fn wait_for_stop<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "android")]
+struct Screen<R: Runtime>(tauri::plugin::PluginHandle<R>);
+
+/// Loads the Kotlin side of "keep the screen on".
+pub fn screen<R: Runtime>() -> TauriPlugin<R> {
+    Builder::new("screen")
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                use tauri::Manager;
+                let handle = api.register_android_plugin("com.martcpp.takkie", "ScreenPlugin")?;
+                app.manage(Screen(handle));
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (app, api);
+            Ok(())
+        })
+        .build()
+}
+
+/// Stops the screen sleeping while the app is in front, or lets it sleep
+/// again. A computer is left alone.
+pub fn keep_screen_on<R: Runtime>(app: &AppHandle<R>, on: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        #[derive(Serialize)]
+        struct Wanted {
+            on: bool,
+        }
+        app.try_state::<Screen<R>>()
+            .ok_or_else(|| "the screen plugin isn't loaded".to_owned())?
+            .0
+            .run_mobile_plugin::<serde::de::IgnoredAny>("setKeepOn", Wanted { on })
+            .map(drop)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, on);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
