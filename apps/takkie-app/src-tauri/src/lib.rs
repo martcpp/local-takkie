@@ -25,6 +25,9 @@ const SNAPSHOT_EVERY: Duration = Duration::from_millis(100);
 /// How often to look whether the engine still runs while nobody is watching.
 const HIDDEN_EVERY: Duration = Duration::from_millis(500);
 
+/// How often to look whether we are still on a local network.
+const NETWORK_EVERY: Duration = Duration::from_secs(3);
+
 /// Whether the window is on screen. Snapshots are only worth sending then.
 struct OnScreen(AtomicBool);
 
@@ -119,9 +122,26 @@ fn start_radio(app: AppHandle) -> Result<(), String> {
             tracing::warn!("no foreground service, so the radio stops with the screen: {error}");
         }
         stop_on_request(app.clone());
+        watch_network(app.clone());
         publish_snapshots(app);
     }
     Ok(())
+}
+
+// Ends by itself once the engine is stopped.
+fn watch_network(app: AppHandle) {
+    let watching = thread::Builder::new()
+        .name("takkie-app-network".into())
+        .spawn(move || {
+            while app.state::<Radio>().is_running() {
+                let on_network = mobile::on_local_network(&app);
+                app.state::<Radio>().note_network(on_network);
+                thread::sleep(NETWORK_EVERY);
+            }
+        });
+    if let Err(error) = watching {
+        tracing::warn!("a lost network won't be shown: {error}");
+    }
 }
 
 /// Turns the radio off until `start_radio` is called again.
@@ -184,6 +204,7 @@ pub fn run() -> tauri::Result<()> {
         .plugin(mobile::multicast())
         .plugin(mobile::service())
         .plugin(mobile::screen())
+        .plugin(mobile::network())
         .manage(Radio::new())
         .manage(OnScreen(AtomicBool::new(true)))
         .invoke_handler(tauri::generate_handler![

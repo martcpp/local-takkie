@@ -32,6 +32,8 @@ export type Snapshot = {
   /** What is running, or `null` when that side isn't. */
   inputDevice: string | null
   outputDevice: string | null
+  /** On a network other takkies can be on. On a phone: Wi-Fi, not mobile data. */
+  network: boolean
   peers: Peer[]
 }
 

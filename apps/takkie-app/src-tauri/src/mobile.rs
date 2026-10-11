@@ -267,6 +267,49 @@ pub fn keep_screen_on<R: Runtime>(app: &AppHandle<R>, on: bool) -> Result<(), St
     }
 }
 
+#[cfg(target_os = "android")]
+struct Network<R: Runtime>(tauri::plugin::PluginHandle<R>);
+
+/// Loads the Kotlin side of "are we on Wi-Fi".
+pub fn network<R: Runtime>() -> TauriPlugin<R> {
+    Builder::new("network")
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                use tauri::Manager;
+                let handle = api.register_android_plugin("com.martcpp.takkie", "NetworkPlugin")?;
+                app.manage(Network(handle));
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (app, api);
+            Ok(())
+        })
+        .build()
+}
+
+/// Whether this device is on a network other takkies can be on. On a phone
+/// that means Wi-Fi or Ethernet: mobile data doesn't count. When it can't be
+/// told, the answer is yes, so nobody is warned for nothing.
+pub fn on_local_network<R: Runtime>(app: &AppHandle<R>) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        #[derive(Deserialize)]
+        struct State {
+            local: bool,
+        }
+        app.try_state::<Network<R>>()
+            .and_then(|network| network.0.run_mobile_plugin::<State>("state", ()).ok())
+            .is_none_or(|state| state.local)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        !takkie_engine::net::address::local_networks().is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
