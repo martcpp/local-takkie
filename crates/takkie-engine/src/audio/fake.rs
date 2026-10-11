@@ -100,6 +100,8 @@ pub struct FakeSink {
     queued: VecDeque<f32>,
     played: Vec<f32>,
     underruns: usize,
+    paused: bool,
+    given_up: bool,
 }
 
 impl FakeSink {
@@ -112,12 +114,30 @@ impl FakeSink {
             queued: VecDeque::with_capacity(capacity),
             played: Vec::new(),
             underruns: 0,
+            paused: false,
+            given_up: false,
         }
     }
 
+    /// Whether playback is paused.
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Whether the mixer reported this sink as dead.
+    #[must_use]
+    pub fn has_given_up(&self) -> bool {
+        self.given_up
+    }
+
     /// Plays `samples` samples, as the device clock would. Silence fills in
-    /// when the queue runs dry, and counts as an underrun.
+    /// when the queue runs dry, and counts as an underrun. A paused sink
+    /// plays nothing.
     pub fn play(&mut self, samples: usize) {
+        if self.paused {
+            return;
+        }
         let mut short = false;
         for _ in 0..samples {
             let sample = self.queued.pop_front().unwrap_or_else(|| {
@@ -161,6 +181,14 @@ impl AudioSink for FakeSink {
         let count = samples.len().min(self.free());
         self.queued.extend(samples.iter().take(count));
         count
+    }
+
+    fn set_playing(&mut self, playing: bool) {
+        self.paused = !playing;
+    }
+
+    fn give_up(&mut self) {
+        self.given_up = true;
     }
 }
 
@@ -262,6 +290,14 @@ impl AudioSink for LiveSink {
 
     fn write(&mut self, samples: &[f32]) -> usize {
         self.with(|sink| sink.write(samples)).unwrap_or(0)
+    }
+
+    fn set_playing(&mut self, playing: bool) {
+        self.with(|sink| sink.set_playing(playing));
+    }
+
+    fn give_up(&mut self) {
+        self.with(|sink| sink.give_up());
     }
 }
 

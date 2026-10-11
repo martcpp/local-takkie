@@ -23,4 +23,12 @@ pub trait AudioSink: Send {
 
     /// Queues as many samples as fit and returns how many. Never blocks.
     fn write(&mut self, samples: &[f32]) -> usize;
+
+    /// Starts or pauses playback. Queued samples stay queued while paused.
+    /// A sink that can't pause ignores this.
+    fn set_playing(&mut self, _playing: bool) {}
+
+    /// Says the device has stopped taking samples, so whoever opened it
+    /// opens it again.
+    fn give_up(&mut self) {}
 }
