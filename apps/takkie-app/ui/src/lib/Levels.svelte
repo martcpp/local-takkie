@@ -1,15 +1,18 @@
 <script lang="ts">
   import type { Snapshot } from './engine'
-  import { meter } from './state'
+  import { meter, outputLabel } from './state'
   import { onPhone, screen, setBeeps, setKeepScreenOn, setMuted, setVolume } from './store.svelte'
 
   let { snapshot }: { snapshot: Snapshot } = $props()
 
   const percent = $derived(Math.round(snapshot.volume * 100))
+  const output = $derived(outputLabel(snapshot))
 </script>
 
 <section aria-labelledby="levels-title">
-  <h2 id="levels-title">Sound</h2>
+  <h2 id="levels-title">
+    Sound {#if output}<span class="output">{output}</span>{/if}
+  </h2>
   <div class="meters">
     <span>Mic</span>
     <meter class="mic" min="0" max="1" value={meter(snapshot.mic.peak)}></meter>
@@ -49,6 +52,12 @@
 </section>
 
 <style>
+  .output {
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 0.375rem;
+  }
+
   .meters {
     display: grid;
     grid-template-columns: auto 1fr;

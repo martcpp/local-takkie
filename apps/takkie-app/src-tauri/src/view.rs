@@ -3,6 +3,8 @@
 use std::time::Instant;
 
 use serde::Serialize;
+
+use crate::mobile::Route;
 use takkie_core::PeerId;
 use takkie_core::dsp::Level;
 use takkie_engine::{DeviceInfo, DeviceList, Direction, EngineEvent, EngineSnapshot, PeerInfo};
@@ -63,12 +65,18 @@ pub struct Running {
     // The opposite of what is shown, so that nothing known yet reads as
     // "on a network".
     offline: bool,
+    route: Option<Route>,
 }
 
 impl Running {
     /// Records whether this device is on a network other takkies can be on.
     pub fn note_network(&mut self, on_network: bool) {
         self.offline = !on_network;
+    }
+
+    /// Records where a phone's sound comes out.
+    pub fn note_route(&mut self, route: Option<Route>) {
+        self.route = route;
     }
 
     /// Follows a device starting or going away; other events change nothing.
@@ -105,6 +113,7 @@ pub struct SnapshotView {
     input_device: Option<String>,
     output_device: Option<String>,
     network: bool,
+    route: Option<Route>,
     peers: Vec<PeerView>,
 }
 
@@ -125,6 +134,7 @@ impl SnapshotView {
             input_device: running.input.clone(),
             output_device: running.output.clone(),
             network: !running.offline,
+            route: running.route,
             peers: snapshot
                 .peers
                 .iter()
@@ -292,6 +302,10 @@ mod tests {
         assert_eq!(json["inputDevice"], "Headset (48000 Hz)");
         assert!(json["outputDevice"].is_null());
         assert_eq!(json["network"], true);
+        assert!(json["route"].is_null());
+        running.note_route(Some(Route::Bluetooth));
+        let routed = SnapshotView::at(&snapshot(Vec::new()), &running, now);
+        assert_eq!(serde_json::to_value(&routed).unwrap()["route"], "bluetooth");
         running.note_network(false);
         let offline = SnapshotView::at(&snapshot(Vec::new()), &running, now);
         assert_eq!(serde_json::to_value(&offline).unwrap()["network"], false);

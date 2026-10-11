@@ -34,10 +34,13 @@ export type Snapshot = {
   outputDevice: string | null
   /** On a network other takkies can be on. On a phone: Wi-Fi, not mobile data. */
   network: boolean
+  /** Where a phone's sound comes out; `null` on a computer. */
+  route: Route | null
   peers: Peer[]
 }
 
 export type Direction = 'input' | 'output'
+export type Route = 'speaker' | 'wired' | 'bluetooth'
 
 export type EngineEvent =
   | { type: 'peerJoined'; peer: Peer }

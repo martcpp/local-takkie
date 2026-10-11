@@ -11,6 +11,7 @@ import {
   meter,
   micGate,
   ordered,
+  outputLabel,
   withAccess,
   withEvent,
   withNote,
@@ -44,6 +45,7 @@ const snapshot = (peers: Peer[] = []): Snapshot => ({
   inputDevice: 'Microphone',
   outputDevice: 'Speakers',
   network: true,
+  route: null,
   peers,
 })
 
@@ -239,6 +241,25 @@ suite('meters and notes', () => {
     const state = withNote(running(), 'Channel 3', 7)
     expect(state.log).toEqual([{ at: 7, text: 'Channel 3' }])
     expect(state.snapshot).not.toBeNull()
+  })
+})
+
+suite('where sound comes out', () => {
+  test('a phone names its route', () => {
+    expect(outputLabel({ ...snapshot(), route: 'speaker' })).toBe('Phone speaker')
+    expect(outputLabel({ ...snapshot(), route: 'wired' })).toBe('Wired headset')
+    expect(outputLabel({ ...snapshot(), route: 'bluetooth' })).toBe('Bluetooth')
+  })
+
+  test('a computer names its device, without the stream settings', () => {
+    const device = { ...snapshot(), outputDevice: 'Headphones (48000 Hz, 2 ch, f32)' }
+    expect(outputLabel(device)).toBe('Headphones')
+    const brackets = { ...snapshot(), outputDevice: 'Speakers (Realtek) (44100 Hz, 2 ch, i16)' }
+    expect(outputLabel(brackets)).toBe('Speakers (Realtek)')
+  })
+
+  test('nothing is shown while no speaker runs', () => {
+    expect(outputLabel({ ...snapshot(), outputDevice: null })).toBeNull()
   })
 })
 

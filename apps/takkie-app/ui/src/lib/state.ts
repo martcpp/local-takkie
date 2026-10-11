@@ -1,7 +1,7 @@
 // What the screens show, and how engine messages change it. Plain functions
 // with no Svelte or Tauri in them, so they can be tested by themselves.
 
-import type { Access, EngineEvent, Peer, Snapshot } from './engine'
+import type { Access, EngineEvent, Peer, Route, Snapshot } from './engine'
 
 export type LogLine = { at: number; text: string }
 
@@ -148,6 +148,23 @@ export function meter(peak: number): number {
     return 0
   }
   return Math.min(1, Math.max(0, (20 * Math.log10(peak) + 60) / 60))
+}
+
+const ROUTES: Record<Route, string> = {
+  speaker: 'Phone speaker',
+  wired: 'Wired headset',
+  bluetooth: 'Bluetooth',
+}
+
+/**
+ * Where sound comes out, in words. A phone reports its route; a computer
+ * names the device it opened, without the stream settings in brackets.
+ */
+export function outputLabel(snapshot: Snapshot): string | null {
+  if (snapshot.route) {
+    return ROUTES[snapshot.route]
+  }
+  return snapshot.outputDevice?.replace(/\s*\([^()]*\)\s*$/, '') || null
 }
 
 /** Passphrases shorter than this get a warning. */

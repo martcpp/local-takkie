@@ -310,9 +310,77 @@ pub fn on_local_network<R: Runtime>(app: &AppHandle<R>) -> bool {
     }
 }
 
+/// Where a phone's sound comes out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Route {
+    /// The loudspeaker.
+    Speaker,
+    /// A wired or USB headset.
+    Wired,
+    /// A Bluetooth headset or speaker.
+    Bluetooth,
+}
+
+#[cfg(target_os = "android")]
+struct Routing<R: Runtime>(tauri::plugin::PluginHandle<R>);
+
+/// Loads the Kotlin side of "where does sound come out".
+pub fn route<R: Runtime>() -> TauriPlugin<R> {
+    Builder::new("route")
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                use tauri::Manager;
+                let handle = api.register_android_plugin("com.martcpp.takkie", "RoutePlugin")?;
+                app.manage(Routing(handle));
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (app, api);
+            Ok(())
+        })
+        .build()
+}
+
+/// Where sound comes out right now, on a phone. `None` on a computer, where
+/// the engine's device name already says it, and when Android won't tell.
+pub fn current_route<R: Runtime>(app: &AppHandle<R>) -> Option<Route> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        #[derive(Deserialize)]
+        struct State {
+            route: Route,
+        }
+        app.try_state::<Routing<R>>()?
+            .0
+            .run_mobile_plugin::<State>("state", ())
+            .ok()
+            .map(|state| state.route)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routes_use_the_words_kotlin_sends() {
+        for (route, word) in [
+            (Route::Speaker, "\"speaker\""),
+            (Route::Wired, "\"wired\""),
+            (Route::Bluetooth, "\"bluetooth\""),
+        ] {
+            assert_eq!(serde_json::to_string(&route).unwrap(), word);
+            assert_eq!(serde_json::from_str::<Route>(word).unwrap(), route);
+        }
+    }
 
     #[test]
     fn what_kotlin_sends_is_understood() {
