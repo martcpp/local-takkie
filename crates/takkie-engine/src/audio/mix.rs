@@ -729,6 +729,7 @@ mod tests {
 
     use super::*;
     use crate::audio::codec::VoiceEncoder;
+    use crate::audio::fake::FakeSink;
 
     fn packets(frequency: f32, count: usize) -> Vec<Vec<u8>> {
         let mut encoder = VoiceEncoder::new().unwrap();
@@ -1273,6 +1274,129 @@ mod tests {
 
     fn frame_rms(samples: &[f32], frame: usize) -> f32 {
         rms(&samples[frame * FRAME..(frame + 1) * FRAME])
+    }
+
+    const STEP: Duration = Duration::from_millis(5);
+
+    fn quiet(
+        playback: &mut Playback,
+        mixer: &mut Mixer,
+        sink: &mut FakeSink,
+        from: Instant,
+        steps: u32,
+    ) {
+        for step in 0..steps {
+            playback.step(mixer, sink, from + STEP * step).unwrap();
+            sink.play(240);
+        }
+    }
+
+    fn a_transmission(
+        playback: &mut Playback,
+        mixer: &mut Mixer,
+        sink: &mut FakeSink,
+        from: Instant,
+    ) {
+        let sent = packets(440.0, 10);
+        for step in 0..120_u32 {
+            let now = from + STEP * step;
+            if step % 4 == 0
+                && let Some(payload) = sent.get(step as usize / 4)
+            {
+                mixer
+                    .receive(rx(1, step as usize / 4, payload), now)
+                    .unwrap();
+            }
+            playback.step(mixer, sink, now).unwrap();
+            sink.play(240);
+        }
+    }
+
+    fn loud(samples: &[f32]) -> usize {
+        samples.iter().filter(|sample| sample.abs() > 0.02).count()
+    }
+
+    fn heard_after_quiet(pause_when_idle: bool) -> (usize, bool) {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, pause_when_idle, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 500);
+        let paused = sink.is_paused();
+        assert_eq!(paused, !playback.is_playing());
+        let before = sink.played().len();
+        a_transmission(&mut playback, &mut mixer, &mut sink, t0 + STEP * 500);
+        assert!(playback.is_playing() && !sink.is_paused());
+        (loud(&sink.played()[before..]), paused)
+    }
+
+    #[test]
+    fn the_speaker_pauses_when_quiet_and_wakes_without_losing_the_start() {
+        let (kept_running, never_paused) = heard_after_quiet(false);
+        let (woken, paused) = heard_after_quiet(true);
+        assert!(!never_paused && paused);
+        assert!(kept_running > 8 * FRAME, "only {kept_running} loud samples");
+        assert!(
+            woken.abs_diff(kept_running) < FRAME / 2,
+            "{woken} loud samples after waking, {kept_running} without pausing"
+        );
+    }
+
+    #[test]
+    fn a_muted_speaker_stays_paused_but_still_shows_who_talks() {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        mixer.controls().set_muted(true);
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, true, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 500);
+        assert!(sink.is_paused());
+
+        let sent = packets(440.0, 10);
+        let from = t0 + STEP * 500;
+        let mut talked = false;
+        for step in 0..60_u32 {
+            let now = from + STEP * step;
+            if step % 4 == 0
+                && let Some(payload) = sent.get(step as usize / 4)
+            {
+                mixer
+                    .receive(rx(1, step as usize / 4, payload), now)
+                    .unwrap();
+            }
+            playback.step(&mut mixer, &mut sink, now).unwrap();
+            talked |= mixer.talking().len() == 1;
+        }
+        assert!(talked, "the talker never showed");
+        assert!(sink.is_paused() && !playback.is_playing());
+    }
+
+    #[test]
+    fn a_speaker_that_stops_taking_audio_is_given_up_on_once() {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, false, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 200);
+        assert!(!sink.has_given_up());
+        for step in 200..900 {
+            playback
+                .step(&mut mixer, &mut sink, t0 + STEP * step)
+                .unwrap();
+        }
+        assert!(sink.has_given_up());
+        assert!(playback.is_playing());
+    }
+
+    #[test]
+    fn a_paused_speaker_is_not_mistaken_for_a_dead_one() {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, true, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 3_000);
+        assert!(sink.is_paused());
+        assert!(!sink.has_given_up());
     }
 
     #[test]
