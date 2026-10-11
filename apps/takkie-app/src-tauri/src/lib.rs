@@ -4,6 +4,7 @@ mod commands;
 mod mobile;
 mod view;
 
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,11 @@ const ENGINE_SNAPSHOT: &str = "engine-snapshot";
 /// Carries the reason, once, when the engine stops while the app runs.
 const ENGINE_STOPPED: &str = "engine-stopped";
 const SNAPSHOT_EVERY: Duration = Duration::from_millis(100);
+/// How often to look whether the engine still runs while nobody is watching.
+const HIDDEN_EVERY: Duration = Duration::from_millis(500);
+
+/// Whether the window is on screen. Snapshots are only worth sending then.
+struct OnScreen(AtomicBool);
 
 // Ends by itself once the engine is stopped, or if it never started.
 fn publish_snapshots(app: AppHandle) {
@@ -30,10 +36,14 @@ fn publish_snapshots(app: AppHandle) {
             let why = loop {
                 match app.state::<Radio>().view() {
                     Ok(view) => {
-                        if let Err(error) = app.emit(ENGINE_SNAPSHOT, view) {
-                            tracing::debug!("snapshot not sent: {error}");
+                        if !app.state::<OnScreen>().0.load(Relaxed) {
+                            thread::sleep(HIDDEN_EVERY);
+                        } else {
+                            if let Err(error) = app.emit(ENGINE_SNAPSHOT, view) {
+                                tracing::debug!("snapshot not sent: {error}");
+                            }
+                            thread::sleep(SNAPSHOT_EVERY);
                         }
-                        thread::sleep(SNAPSHOT_EVERY);
                     }
                     Err(why) => break why,
                 }
@@ -148,6 +158,13 @@ fn stop_radio(app: AppHandle) {
     turn_off(&app);
 }
 
+/// The frontend says when the window is shown or hidden, so a hidden one
+/// isn't sent ten snapshots a second.
+#[tauri::command]
+fn set_on_screen(app: AppHandle, on: bool) {
+    app.state::<OnScreen>().0.store(on, Relaxed);
+}
+
 /// Runs the app until its window closes.
 ///
 /// # Errors
@@ -168,9 +185,11 @@ pub fn run() -> tauri::Result<()> {
         .plugin(mobile::service())
         .plugin(mobile::screen())
         .manage(Radio::new())
+        .manage(OnScreen(AtomicBool::new(true)))
         .invoke_handler(tauri::generate_handler![
             start_radio,
             stop_radio,
+            set_on_screen,
             commands::permissions,
             commands::request_permissions,
             commands::open_app_settings,

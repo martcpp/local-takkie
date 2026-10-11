@@ -71,6 +71,14 @@ class RadioService : Service() {
     return START_NOT_STICKY
   }
 
+  // Swiped away from the recent apps: turn the radio off, so others see us
+  // leave, and don't keep a notification for an app that is gone.
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    ServicePlugin.stopRequested()
+    stopSelf()
+    super.onTaskRemoved(rootIntent)
+  }
+
   override fun onDestroy() {
     lock?.takeIf { it.isHeld }?.release()
     lock = null
