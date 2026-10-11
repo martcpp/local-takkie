@@ -202,6 +202,7 @@ pub struct Mixer {
     level: Arc<LevelMeter>,
     beep: Option<(Tone, Cue)>,
     was_transmitting: bool,
+    sounded: bool,
 }
 
 impl Mixer {
@@ -232,6 +233,7 @@ impl Mixer {
             level: shared.level,
             beep: None,
             was_transmitting: false,
+            sounded: false,
         }
     }
 
@@ -309,6 +311,11 @@ impl Mixer {
             .map(|t| t.jitter.len())
             .max()
             .unwrap_or(0)
+    }
+
+    /// Whether any frame since the last call had something to hear in it.
+    pub fn take_sounded(&mut self) -> bool {
+        std::mem::take(&mut self.sounded)
     }
 
     /// Mixes the next 20 ms from every sender into `out`, covering lost
@@ -402,7 +409,9 @@ impl Mixer {
             }
         }
         self.was_transmitting = transmitting;
-        self.level.set(Level::of(out));
+        let level = Level::of(out);
+        self.sounded |= level.peak > 0.0;
+        self.level.set(level);
     }
 }
 
@@ -427,6 +436,10 @@ impl Default for Mixer {
         Self::new()
     }
 }
+
+// Where a paused speaker costs nothing to wake. Desktop Bluetooth headsets
+// go to sleep when paused and then swallow the first syllable.
+const PAUSE_WHEN_IDLE: bool = cfg!(target_os = "android");
 
 /// How full the speaker queue is kept. Enough to ride out scheduling
 /// hiccups without adding much delay.
@@ -479,6 +492,136 @@ impl Pacer {
         }
         Ok(made)
     }
+
+    /// Mixes one frame without playing it, and says whether there is
+    /// anything to hear in it.
+    fn rehearse(&mut self, mixer: &mut Mixer, at: Instant) -> bool {
+        mixer.tick(at, &mut self.frame);
+        mixer.take_sounded()
+    }
+
+    /// Plays the frame [`rehearse`](Self::rehearse) just mixed.
+    fn play_rehearsed(&mut self, sink: &mut dyn AudioSink) -> Result<(), ResampleError> {
+        let written = self.resampler.process(&self.frame, &mut self.device)?;
+        sink.write(&self.device[..written]);
+        Ok(())
+    }
+}
+
+/// How long the speaker keeps running after the last sound.
+const IDLE_AFTER: Duration = Duration::from_secs(2);
+/// A running speaker that takes nothing for this long has died quietly.
+const STALLED_AFTER: Duration = Duration::from_secs(3);
+const FRAME_TIME: Duration = Duration::from_millis(20);
+
+/// Runs the speaker only while there is something to hear.
+///
+/// Feeding silence to a device keeps it awake for nothing, and some phones
+/// stop a stream that has played only zeros for a minute, without an error.
+/// While the speaker is paused the mixer is paced by the clock, so "who is
+/// talking" and the jitter buffers keep moving.
+pub struct Playback {
+    pacer: Pacer,
+    pause_when_idle: bool,
+    playing: bool,
+    last_sound: Instant,
+    next_tick: Instant,
+    queued: usize,
+    moved: Instant,
+    given_up: bool,
+}
+
+impl Playback {
+    /// Playback for a speaker at `device_rate`, running from `now`.
+    ///
+    /// # Errors
+    /// [`ResampleError`] if the rate can't be converted.
+    pub fn new(
+        device_rate: u32,
+        pause_when_idle: bool,
+        now: Instant,
+    ) -> Result<Self, ResampleError> {
+        Ok(Self {
+            pacer: Pacer::new(device_rate)?,
+            pause_when_idle,
+            playing: true,
+            last_sound: now,
+            next_tick: now,
+            queued: 0,
+            moved: now,
+            given_up: false,
+        })
+    }
+
+    /// Whether the speaker is running.
+    #[must_use]
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    /// Moves audio along. Call it every few milliseconds.
+    ///
+    /// # Errors
+    /// [`ResampleError`] if resampling fails.
+    pub fn step(
+        &mut self,
+        mixer: &mut Mixer,
+        sink: &mut dyn AudioSink,
+        now: Instant,
+    ) -> Result<(), ResampleError> {
+        if self.playing {
+            self.pacer.fill(mixer, sink, now)?;
+            if mixer.take_sounded() {
+                self.last_sound = now;
+            } else if self.pause_when_idle
+                && now.saturating_duration_since(self.last_sound) >= IDLE_AFTER
+            {
+                sink.set_playing(false);
+                self.playing = false;
+                self.next_tick = now;
+            }
+            self.watch(sink, now);
+        } else {
+            self.keep_time(mixer, sink, now)?;
+        }
+        Ok(())
+    }
+
+    fn keep_time(
+        &mut self,
+        mixer: &mut Mixer,
+        sink: &mut dyn AudioSink,
+        now: Instant,
+    ) -> Result<(), ResampleError> {
+        // After a long stall, don't replay the time that was missed.
+        if now.saturating_duration_since(self.next_tick) > FRAME_TIME * 10 {
+            self.next_tick = now;
+        }
+        while self.next_tick <= now {
+            let at = self.next_tick;
+            self.next_tick += FRAME_TIME;
+            if self.pacer.rehearse(mixer, at) {
+                sink.set_playing(true);
+                self.playing = true;
+                self.last_sound = now;
+                self.moved = now;
+                return self.pacer.play_rehearsed(sink);
+            }
+        }
+        Ok(())
+    }
+
+    fn watch(&mut self, sink: &mut dyn AudioSink, now: Instant) {
+        let queued = sink.queued();
+        if queued != self.queued || queued < self.pacer.target {
+            self.queued = queued;
+            self.moved = now;
+        } else if !self.given_up && now.saturating_duration_since(self.moved) >= STALLED_AFTER {
+            tracing::warn!("the speaker stopped taking audio; reopening it");
+            sink.give_up();
+            self.given_up = true;
+        }
+    }
 }
 
 /// The running mix thread. Dropping it stops the thread.
@@ -500,7 +643,7 @@ impl MixThread {
         mut sink: Box<dyn AudioSink>,
         shared: MixShared,
     ) -> Result<Self, MixError> {
-        let mut pacer = Pacer::new(sink.sample_rate())?;
+        let mut playback = Playback::new(sink.sample_rate(), PAUSE_WHEN_IDLE, Instant::now())?;
         let rate = sink.sample_rate().max(1) as usize;
         let talking = Arc::clone(&shared.talking);
         let mut mixer = Mixer::with_shared(shared);
@@ -523,7 +666,7 @@ impl MixThread {
                             MixInput::Left(sender) => mixer.remove(sender),
                         }
                     }
-                    if let Err(error) = pacer.fill(&mut mixer, sink.as_mut(), Instant::now()) {
+                    if let Err(error) = playback.step(&mut mixer, sink.as_mut(), Instant::now()) {
                         tracing::error!("mix stopped: {error}");
                         return;
                     }
@@ -586,6 +729,7 @@ mod tests {
 
     use super::*;
     use crate::audio::codec::VoiceEncoder;
+    use crate::audio::fake::FakeSink;
 
     fn packets(frequency: f32, count: usize) -> Vec<Vec<u8>> {
         let mut encoder = VoiceEncoder::new().unwrap();
@@ -1130,6 +1274,129 @@ mod tests {
 
     fn frame_rms(samples: &[f32], frame: usize) -> f32 {
         rms(&samples[frame * FRAME..(frame + 1) * FRAME])
+    }
+
+    const STEP: Duration = Duration::from_millis(5);
+
+    fn quiet(
+        playback: &mut Playback,
+        mixer: &mut Mixer,
+        sink: &mut FakeSink,
+        from: Instant,
+        steps: u32,
+    ) {
+        for step in 0..steps {
+            playback.step(mixer, sink, from + STEP * step).unwrap();
+            sink.play(240);
+        }
+    }
+
+    fn a_transmission(
+        playback: &mut Playback,
+        mixer: &mut Mixer,
+        sink: &mut FakeSink,
+        from: Instant,
+    ) {
+        let sent = packets(440.0, 10);
+        for step in 0..120_u32 {
+            let now = from + STEP * step;
+            if step % 4 == 0
+                && let Some(payload) = sent.get(step as usize / 4)
+            {
+                mixer
+                    .receive(rx(1, step as usize / 4, payload), now)
+                    .unwrap();
+            }
+            playback.step(mixer, sink, now).unwrap();
+            sink.play(240);
+        }
+    }
+
+    fn loud(samples: &[f32]) -> usize {
+        samples.iter().filter(|sample| sample.abs() > 0.02).count()
+    }
+
+    fn heard_after_quiet(pause_when_idle: bool) -> (usize, bool) {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, pause_when_idle, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 500);
+        let paused = sink.is_paused();
+        assert_eq!(paused, !playback.is_playing());
+        let before = sink.played().len();
+        a_transmission(&mut playback, &mut mixer, &mut sink, t0 + STEP * 500);
+        assert!(playback.is_playing() && !sink.is_paused());
+        (loud(&sink.played()[before..]), paused)
+    }
+
+    #[test]
+    fn the_speaker_pauses_when_quiet_and_wakes_without_losing_the_start() {
+        let (kept_running, never_paused) = heard_after_quiet(false);
+        let (woken, paused) = heard_after_quiet(true);
+        assert!(!never_paused && paused);
+        assert!(kept_running > 8 * FRAME, "only {kept_running} loud samples");
+        assert!(
+            woken.abs_diff(kept_running) < FRAME / 2,
+            "{woken} loud samples after waking, {kept_running} without pausing"
+        );
+    }
+
+    #[test]
+    fn a_muted_speaker_stays_paused_but_still_shows_who_talks() {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        mixer.controls().set_muted(true);
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, true, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 500);
+        assert!(sink.is_paused());
+
+        let sent = packets(440.0, 10);
+        let from = t0 + STEP * 500;
+        let mut talked = false;
+        for step in 0..60_u32 {
+            let now = from + STEP * step;
+            if step % 4 == 0
+                && let Some(payload) = sent.get(step as usize / 4)
+            {
+                mixer
+                    .receive(rx(1, step as usize / 4, payload), now)
+                    .unwrap();
+            }
+            playback.step(&mut mixer, &mut sink, now).unwrap();
+            talked |= mixer.talking().len() == 1;
+        }
+        assert!(talked, "the talker never showed");
+        assert!(sink.is_paused() && !playback.is_playing());
+    }
+
+    #[test]
+    fn a_speaker_that_stops_taking_audio_is_given_up_on_once() {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, false, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 200);
+        assert!(!sink.has_given_up());
+        for step in 200..900 {
+            playback
+                .step(&mut mixer, &mut sink, t0 + STEP * step)
+                .unwrap();
+        }
+        assert!(sink.has_given_up());
+        assert!(playback.is_playing());
+    }
+
+    #[test]
+    fn a_paused_speaker_is_not_mistaken_for_a_dead_one() {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 9_600);
+        let mut playback = Playback::new(48_000, true, t0).unwrap();
+        quiet(&mut playback, &mut mixer, &mut sink, t0, 3_000);
+        assert!(sink.is_paused());
+        assert!(!sink.has_given_up());
     }
 
     #[test]
