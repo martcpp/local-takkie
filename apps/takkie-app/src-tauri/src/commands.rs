@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use takkie_core::{ChannelId, Passphrase};
-use takkie_engine::{Engine, EngineConfig, EngineEvent};
+use takkie_engine::{Engine, EngineConfig, EngineEvent, EngineStats};
 use tauri::{AppHandle, State};
 
 use crate::mobile::{self, Access, Route};
@@ -74,6 +74,11 @@ impl Radio {
         if let Ok(mut engine) = self.engine.lock() {
             *engine = Err(why.to_owned());
         }
+    }
+
+    /// The engine's running totals, for the log.
+    pub fn stats(&self) -> Option<EngineStats> {
+        self.with(|engine| engine.snapshot().stats).ok()
     }
 
     /// Whether the engine is running.

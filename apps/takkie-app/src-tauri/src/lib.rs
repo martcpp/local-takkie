@@ -134,12 +134,30 @@ fn watch_surroundings(app: AppHandle) {
     let watching = thread::Builder::new()
         .name("takkie-app-surroundings".into())
         .spawn(move || {
+            let mut logged = None;
             while app.state::<Radio>().is_running() {
                 let on_network = mobile::on_local_network(&app);
                 let route = mobile::current_route(&app);
                 let radio = app.state::<Radio>();
                 radio.note_network(on_network);
                 radio.note_route(route);
+                // Audio trouble is only heard, never reported, so leave a trace.
+                let stats = radio.stats();
+                if stats != logged
+                    && let Some(now) = stats
+                {
+                    tracing::info!(
+                        underruns = now.speaker_underruns,
+                        concealed = now.frames_concealed,
+                        silenced = now.frames_silenced,
+                        recovered = now.frames_recovered,
+                        mic_dropped = now.mic_dropped,
+                        received = now.packets_received,
+                        sent = now.packets_sent,
+                        "audio totals"
+                    );
+                    logged = stats;
+                }
                 thread::sleep(SURROUNDINGS_EVERY);
             }
         });
