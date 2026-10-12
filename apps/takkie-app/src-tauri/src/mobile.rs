@@ -112,6 +112,57 @@ pub fn open_settings<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "android")]
+struct Multicast<R: Runtime>(tauri::plugin::PluginHandle<R>);
+
+/// Loads the Kotlin side of the Wi-Fi multicast lock.
+pub fn multicast<R: Runtime>() -> TauriPlugin<R> {
+    Builder::new("multicast")
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                use tauri::Manager;
+                let handle =
+                    api.register_android_plugin("com.martcpp.takkie", "MulticastPlugin")?;
+                app.manage(Multicast(handle));
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (app, api);
+            Ok(())
+        })
+        .build()
+}
+
+/// Takes or releases the Wi-Fi multicast lock, and returns whether it is
+/// held now. Android drops incoming mDNS without it; elsewhere there is no
+/// such lock and discovery always works, so this answers `true`.
+pub fn set_multicast_lock<R: Runtime>(app: &AppHandle<R>, on: bool) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        #[derive(Serialize)]
+        struct Wanted {
+            on: bool,
+        }
+        #[derive(Deserialize)]
+        struct Lock {
+            held: bool,
+        }
+        app.try_state::<Multicast<R>>()
+            .ok_or_else(|| "the multicast plugin isn't loaded".to_owned())?
+            .0
+            .run_mobile_plugin::<Lock>("setLock", Wanted { on })
+            .map(|lock| lock.held)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, on);
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -88,7 +88,9 @@ You need, on top of the desktop app's tools:
 - The Android SDK command-line tools, with `ANDROID_HOME` pointing at the
   SDK. Through `sdkmanager`, install `platform-tools`, a platform, build
   tools, an NDK and `cmake` (which brings Ninja).
-- `NDK_HOME` and `ANDROID_NDK_HOME` pointing at the NDK folder.
+- `NDK_HOME` and `ANDROID_NDK_HOME` pointing at the NDK folder. Don't set
+  a linker or compiler yourself (`CARGO_TARGET_..._LINKER`, `CC_...`): Tauri
+  picks them, and a different one makes every build recompile everything.
 - The Rust targets:
   `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android`
 - libopus is cross-compiled with CMake, which can't use a Visual Studio
