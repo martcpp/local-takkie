@@ -10,7 +10,7 @@
   import PermissionGate from './lib/PermissionGate.svelte'
   import PttButton from './lib/PttButton.svelte'
   import { channelState, micGate } from './lib/state'
-  import { app, connect, recheck } from './lib/store.svelte'
+  import { app, connect, recheck, turnOn } from './lib/store.svelte'
 
   const version = getVersion()
   let passphrase: PassphraseDialog | undefined = $state()
@@ -44,6 +44,7 @@
     <section class="problem" role="alert">
       <h2>The radio isn't running</h2>
       <p>{app.problem}</p>
+      <button onclick={() => turnOn()}>Turn it on</button>
     </section>
   {:else if app.snapshot}
     <ChannelPicker snapshot={app.snapshot} onLock={() => passphrase?.open()} />
@@ -127,6 +128,11 @@
   .problem p,
   .starting {
     margin: 0;
+  }
+
+  .problem button {
+    margin-top: 0.75rem;
+    min-height: 2.75rem;
   }
 
   footer {

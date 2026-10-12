@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">"local-takkie"</string>
     <string name="main_activity_title">"local-takkie"</string>
+    <string name="radio_channel">Radio is on</string>
+    <string name="radio_on_title">local-takkie is on</string>
+    <string name="radio_on_text">Listening on your network</string>
+    <string name="radio_stop">Stop</string>
 </resources>

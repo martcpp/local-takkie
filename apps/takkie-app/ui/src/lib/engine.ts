@@ -61,6 +61,7 @@ export const requestPermissions = () => invoke<Access>('request_permissions')
 export const openAppSettings = () => invoke<void>('open_app_settings')
 /** Does nothing if the engine already runs. */
 export const startRadio = () => invoke<void>('start_radio')
+export const stopRadio = () => invoke<void>('stop_radio')
 
 export const snapshot = () => invoke<Snapshot>('snapshot')
 export const listDevices = () => invoke<Devices>('list_devices')
@@ -77,6 +78,10 @@ export const setChannel = (channel: number, passphrase?: string) =>
 
 export const onSnapshot = (handler: (snapshot: Snapshot) => void): Promise<UnlistenFn> =>
   listen<Snapshot>('engine-snapshot', (message) => handler(message.payload))
+
+/** Fires once, with the reason, when the engine stops while the app runs. */
+export const onStopped = (handler: (why: string) => void): Promise<UnlistenFn> =>
+  listen<string>('engine-stopped', (message) => handler(message.payload))
 
 export const onEvent = (handler: (event: EngineEvent) => void): Promise<UnlistenFn> =>
   listen<EngineEvent>('engine-event', (message) => handler(message.payload))
