@@ -81,7 +81,7 @@
     min-height: 100vh;
     min-height: 100dvh;
     margin: 0 auto;
-    padding: max(var(--gutter), env(safe-area-inset-top))
+    padding: calc(var(--gutter) + env(safe-area-inset-top))
       max(var(--gutter), env(safe-area-inset-right)) 0
       max(var(--gutter), env(safe-area-inset-left));
     display: flex;
