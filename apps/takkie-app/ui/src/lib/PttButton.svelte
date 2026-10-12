@@ -80,7 +80,13 @@
   oncontextmenu={(event) => event.preventDefault()}
 >
   <span class="label">{live ? 'Talking' : 'Hold to talk'}</span>
-  <span class="hint">{reason ?? (live ? 'Release to stop' : 'or hold SPACE')}</span>
+  {#if reason}
+    <span class="hint">{reason}</span>
+  {:else if live}
+    <span class="hint">Release to stop</span>
+  {:else}
+    <span class="hint keyboard">or hold SPACE</span>
+  {/if}
 </button>
 
 <style>
@@ -118,5 +124,19 @@
   .hint {
     font-size: 0.875rem;
     opacity: 0.8;
+  }
+
+  /* A phone has no SPACE key to hold. */
+  @media (hover: none) and (pointer: coarse) {
+    .keyboard {
+      display: none;
+    }
+  }
+
+  /* Landscape on a phone: leave room for the list above. */
+  @media (max-height: 30rem) {
+    .ptt {
+      min-height: 4rem;
+    }
   }
 </style>

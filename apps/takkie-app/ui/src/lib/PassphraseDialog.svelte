@@ -11,6 +11,16 @@
   export function open() {
     passphrase = ''
     dialog.showModal()
+    // An entry for the system back gesture to undo, so it closes the dialog
+    // and doesn't leave the app.
+    history.pushState({ dialog: true }, '')
+  }
+
+  function closed() {
+    passphrase = ''
+    if (history.state?.dialog) {
+      history.back()
+    }
   }
 
   function apply(secret: string) {
@@ -20,7 +30,15 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="passphrase-title" onclose={() => (passphrase = '')}>
+<svelte:window
+  onpopstate={() => {
+    if (dialog.open) {
+      dialog.close()
+    }
+  }}
+/>
+
+<dialog bind:this={dialog} aria-labelledby="passphrase-title" onclose={closed}>
   <form
     onsubmit={(event) => {
       event.preventDefault()
