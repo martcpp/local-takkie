@@ -32,6 +32,8 @@ use crate::net::{Transport, UdpTransport};
 use crate::threads::{STOP_WITHIN, join_within};
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
+// Often enough that a newcomer finds a sleeping phone within a few seconds.
+const ANNOUNCE_EVERY: Duration = Duration::from_secs(5);
 // The control thread owns mDNS, whose goodbye can take up to two seconds.
 const MDNS_GOODBYE: Duration = Duration::from_secs(2);
 
@@ -600,6 +602,7 @@ struct Control<O: DeviceOpener> {
 impl<O: DeviceOpener> Control<O> {
     fn run(mut self, commands: &Receiver<Command>, mut peer_events: Receiver<PeerEvent>) {
         let mut next_poll = Instant::now() + POLL_EVERY;
+        let mut next_announce = Instant::now() + ANNOUNCE_EVERY;
         loop {
             select! {
                 recv(commands) -> command => match command {
@@ -644,6 +647,14 @@ impl<O: DeviceOpener> Control<O> {
                     self.send(audio_event(change));
                 }
                 next_poll = now + POLL_EVERY;
+            }
+            if now >= next_announce {
+                if let Some((_, discovery)) = &self.mdns
+                    && let Err(error) = discovery.announce_again()
+                {
+                    tracing::debug!("couldn't announce again: {error}");
+                }
+                next_announce = now + ANNOUNCE_EVERY;
             }
         }
         drop(self.mdns.take());

@@ -157,6 +157,19 @@ impl Discovery {
         })
     }
 
+    /// Announces us again, unasked.
+    ///
+    /// A sleeping phone's Wi-Fi drops incoming multicast, so it never hears
+    /// a newcomer's question. It can still send, though: hearing this, the
+    /// newcomer learns our address and reaches us directly.
+    ///
+    /// # Errors
+    /// [`DiscoveryError`] if the daemon has stopped.
+    pub fn announce_again(&self) -> Result<(), DiscoveryError> {
+        self.daemon.register(service_info(&self.announcement)?)?;
+        Ok(())
+    }
+
     /// Announces a new channel, so peers see it in our TXT record.
     ///
     /// # Errors
