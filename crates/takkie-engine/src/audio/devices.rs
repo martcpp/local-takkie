@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{DevicesError, SampleFormat, SupportedStreamConfigRange};
+use cpal::{SampleFormat, SupportedStreamConfigRange};
 use thiserror::Error;
 
 /// One device and what it supports.
@@ -54,7 +54,7 @@ impl fmt::Display for Direction {
 pub enum DeviceError {
     /// The audio system couldn't be asked.
     #[error("couldn't list audio devices: {0}")]
-    List(#[from] DevicesError),
+    List(#[from] cpal::Error),
     /// No device at all, not even a default.
     #[error("no audio {0} device found")]
     Missing(Direction),

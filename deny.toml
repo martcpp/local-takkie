@@ -26,6 +26,9 @@ exceptions = [
     { allow = ["MPL-2.0"], crate = "cssparser-macros" },
     { allow = ["MPL-2.0"], crate = "dtoa-short" },
     { allow = ["MPL-2.0"], crate = "selectors" },
+    # Mozilla's real-time thread helper, pulled in by cpal's `realtime`
+    # feature and used unmodified.
+    { allow = ["MPL-2.0"], crate = "audio_thread_priority" },
 ]
 
 [bans]

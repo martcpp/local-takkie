@@ -238,6 +238,17 @@ impl<O: DeviceOpener> AudioSession<O> {
     pub fn poll(&mut self, now: Instant) -> Vec<AudioEvent> {
         let mut events = Vec::new();
         self.follow_defaults(now);
+        for (side, counters) in [
+            ("microphone", &self.input.counters),
+            ("speaker", &self.output.counters),
+        ] {
+            if counters
+                .as_ref()
+                .is_some_and(|c| c.realtime_denied.swap(false, Relaxed))
+            {
+                tracing::info!("the system gave the {side} no real-time or low-latency path");
+            }
+        }
         if self.input.lost() {
             self.input.thread = None;
             events.push(AudioEvent::DeviceLost(Direction::Input));

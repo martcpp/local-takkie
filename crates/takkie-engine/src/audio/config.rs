@@ -5,10 +5,7 @@
 use std::fmt;
 
 use cpal::traits::DeviceTrait;
-use cpal::{
-    DefaultStreamConfigError, SampleFormat, SupportedStreamConfig, SupportedStreamConfigRange,
-    SupportedStreamConfigsError,
-};
+use cpal::{SampleFormat, SupportedStreamConfig, SupportedStreamConfigRange};
 use thiserror::Error;
 
 /// Opus's native rate.
@@ -50,10 +47,10 @@ impl fmt::Display for StreamSettings {
 pub enum ConfigError {
     /// Listing supported configs failed.
     #[error("couldn't read the device's stream configs: {0}")]
-    Supported(#[from] SupportedStreamConfigsError),
+    Supported(cpal::Error),
     /// The device has no default config.
     #[error("the device has no default stream config: {0}")]
-    Default(#[from] DefaultStreamConfigError),
+    Default(cpal::Error),
 }
 
 /// 48 kHz f32 if any range offers it, keeping the default's channel count
@@ -75,8 +72,15 @@ pub fn choose_config(
 /// # Errors
 /// [`ConfigError`] if the device can't report its configs.
 pub fn input_config(device: &cpal::Device) -> Result<SupportedStreamConfig, ConfigError> {
-    let default = device.default_input_config()?;
-    Ok(choose_config(device.supported_input_configs()?, default))
+    let default = device
+        .default_input_config()
+        .map_err(ConfigError::Default)?;
+    Ok(choose_config(
+        device
+            .supported_input_configs()
+            .map_err(ConfigError::Supported)?,
+        default,
+    ))
 }
 
 /// The config to play to `device` with.
@@ -84,8 +88,15 @@ pub fn input_config(device: &cpal::Device) -> Result<SupportedStreamConfig, Conf
 /// # Errors
 /// [`ConfigError`] if the device can't report its configs.
 pub fn output_config(device: &cpal::Device) -> Result<SupportedStreamConfig, ConfigError> {
-    let default = device.default_output_config()?;
-    Ok(choose_config(device.supported_output_configs()?, default))
+    let default = device
+        .default_output_config()
+        .map_err(ConfigError::Default)?;
+    Ok(choose_config(
+        device
+            .supported_output_configs()
+            .map_err(ConfigError::Supported)?,
+        default,
+    ))
 }
 
 #[cfg(test)]
@@ -154,27 +165,21 @@ mod tests {
     #[test]
     fn uses_the_default_without_48k() {
         let fallback = default(2, 44_100, SampleFormat::F32);
-        let chosen = choose_config(
-            [range(2, 44_100, 44_100, SampleFormat::F32)],
-            fallback.clone(),
-        );
+        let chosen = choose_config([range(2, 44_100, 44_100, SampleFormat::F32)], fallback);
         assert_eq!(chosen, fallback);
     }
 
     #[test]
     fn uses_the_default_without_f32() {
         let fallback = default(1, 48_000, SampleFormat::I16);
-        let chosen = choose_config(
-            [range(1, 48_000, 48_000, SampleFormat::I16)],
-            fallback.clone(),
-        );
+        let chosen = choose_config([range(1, 48_000, 48_000, SampleFormat::I16)], fallback);
         assert_eq!(chosen, fallback);
     }
 
     #[test]
     fn uses_the_default_when_nothing_is_listed() {
         let fallback = default(2, 16_000, SampleFormat::U16);
-        assert_eq!(choose_config([], fallback.clone()), fallback);
+        assert_eq!(choose_config([], fallback), fallback);
     }
 
     #[test]
