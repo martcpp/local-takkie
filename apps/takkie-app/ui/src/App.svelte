@@ -10,7 +10,7 @@
   import PermissionGate from './lib/PermissionGate.svelte'
   import PttButton from './lib/PttButton.svelte'
   import { channelState, micGate } from './lib/state'
-  import { app, connect, recheck, turnOn } from './lib/store.svelte'
+  import { app, connect, shown, turnOn } from './lib/store.svelte'
 
   const version = getVersion()
   let passphrase: PassphraseDialog | undefined = $state()
@@ -25,9 +25,7 @@
 
 <svelte:document
   onvisibilitychange={() => {
-    if (!document.hidden) {
-      void recheck()
-    }
+    void shown(!document.hidden)
   }}
 />
 

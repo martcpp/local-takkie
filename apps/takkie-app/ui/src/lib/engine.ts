@@ -64,6 +64,8 @@ export const setKeepScreenOn = (on: boolean) => invoke<void>('set_keep_screen_on
 /** Does nothing if the engine already runs. */
 export const startRadio = () => invoke<void>('start_radio')
 export const stopRadio = () => invoke<void>('stop_radio')
+/** Snapshots only flow while the window is on screen. */
+export const setOnScreen = (on: boolean) => invoke<void>('set_on_screen', { on })
 
 export const snapshot = () => invoke<Snapshot>('snapshot')
 export const listDevices = () => invoke<Devices>('list_devices')

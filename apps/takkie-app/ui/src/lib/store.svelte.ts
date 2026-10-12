@@ -83,10 +83,24 @@ async function begin(asked: Promise<engine.Access>) {
 /** Shows the system's permission prompt, and starts the radio if allowed. */
 export const allowMicrophone = () => begin(engine.requestPermissions())
 
-/** Looks again, for when the user comes back from the system settings. */
-export async function recheck() {
-  if (!state.snapshot && state.access && micGate(state.access) !== 'ready') {
+/**
+ * Tells the app whether the window is on screen. Coming back, it shows the
+ * current state at once: a fresh snapshot, the reason the radio stopped
+ * meanwhile, or the radio starting because the microphone is now allowed.
+ */
+export async function shown(visible: boolean) {
+  await ask(engine.setOnScreen(visible))
+  if (!visible) {
+    return
+  }
+  if (state.access && micGate(state.access) !== 'ready') {
     await begin(engine.permissions())
+  } else if (state.snapshot) {
+    try {
+      state = withSnapshot(state, await engine.snapshot())
+    } catch (problem) {
+      state = withProblem(state, String(problem))
+    }
   }
 }
 
