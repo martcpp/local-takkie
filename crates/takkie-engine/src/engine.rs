@@ -31,7 +31,7 @@ use crate::net::rx::{RxCounters, RxOutputs, RxThread};
 use crate::net::send::{PacketSender, SendCounters, SendThread};
 use crate::net::{Transport, UdpTransport};
 use crate::threads::{STOP_WITHIN, join_within};
-use takkie_core::voice::Clarity;
+use takkie_core::voice::{Clarity, MicAdvice};
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
 // Often enough that a newcomer finds a sleeping phone within a few seconds.
@@ -229,6 +229,14 @@ pub struct EngineSnapshot {
     pub muted: bool,
     /// The start and end beeps are on.
     pub beeps: bool,
+    /// How hard background noise is removed from the microphone.
+    pub noise_suppression: NoiseSuppression,
+    /// Quiet and loud talkers are brought to the same level.
+    pub auto_level: bool,
+    /// How much the part of the voice that carries words is lifted.
+    pub clarity: Clarity,
+    /// Something about the microphone the person should know.
+    pub mic_advice: MicAdvice,
     /// Playback volume.
     pub volume: f32,
     /// The latest mic level.
@@ -582,6 +590,10 @@ impl Engine {
             transmitting: shared.transmitting.load(Relaxed),
             muted: shared.mix.controls.is_muted(),
             beeps: shared.mix.controls.beeps(),
+            noise_suppression: shared.voice.noise_suppression(),
+            auto_level: shared.voice.auto_level(),
+            clarity: shared.voice.clarity(),
+            mic_advice: shared.voice.mic_advice(),
             volume: shared.mix.controls.volume(),
             mic: shared.level.get(),
             speaker: shared.mix.level.get(),
@@ -1123,6 +1135,19 @@ mod tests {
 
         c.engine.set_beeps(true);
         assert!(c.engine.snapshot().beeps);
+
+        let before = c.engine.snapshot();
+        assert_eq!(before.noise_suppression, NoiseSuppression::Off);
+        assert!(!before.auto_level);
+        assert_eq!(before.clarity, Clarity::Off);
+        assert_eq!(before.mic_advice, MicAdvice::Fine);
+        c.engine.set_noise_suppression(NoiseSuppression::Strong);
+        c.engine.set_auto_level(true);
+        c.engine.set_clarity(Clarity::Normal);
+        let after = c.engine.snapshot();
+        assert_eq!(after.noise_suppression, NoiseSuppression::Strong);
+        assert!(after.auto_level);
+        assert_eq!(after.clarity, Clarity::Normal);
         a.engine.set_transmitting(true);
         wait_for(&c.events, |e| *e == started);
         a.engine.set_transmitting(false);

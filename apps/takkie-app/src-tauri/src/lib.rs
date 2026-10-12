@@ -338,6 +338,9 @@ pub fn run() -> tauri::Result<()> {
             commands::set_volume,
             commands::set_peer_muted,
             commands::set_beeps,
+            commands::set_noise_suppression,
+            commands::set_auto_level,
+            commands::set_clarity,
             commands::list_devices,
         ])
         .build(tauri::generate_context!())?;

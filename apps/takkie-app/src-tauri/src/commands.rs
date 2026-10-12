@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use takkie_core::{ChannelId, Passphrase};
-use takkie_engine::{Engine, EngineConfig, EngineEvent, EngineStats};
+use takkie_engine::{Engine, EngineConfig, EngineEvent, EngineStats, Strength};
 use tauri::{AppHandle, State};
 
 use crate::mobile::{self, Access, Route};
@@ -247,6 +247,27 @@ pub fn set_peer_muted(radio: State<'_, Radio>, peer: &str, muted: bool) -> Resul
 #[tauri::command]
 pub fn set_beeps(radio: State<'_, Radio>, on: bool) -> Result<(), String> {
     radio.with(|engine| engine.set_beeps(on))
+}
+
+fn strength(name: &str) -> Result<Strength, String> {
+    Strength::from_name(name).ok_or_else(|| format!("{name:?} isn't off, normal or strong"))
+}
+
+#[tauri::command]
+pub fn set_noise_suppression(radio: State<'_, Radio>, level: &str) -> Result<(), String> {
+    let level = strength(level)?;
+    radio.with(|engine| engine.set_noise_suppression(level))
+}
+
+#[tauri::command]
+pub fn set_auto_level(radio: State<'_, Radio>, on: bool) -> Result<(), String> {
+    radio.with(|engine| engine.set_auto_level(on))
+}
+
+#[tauri::command]
+pub fn set_clarity(radio: State<'_, Radio>, level: &str) -> Result<(), String> {
+    let level = strength(level)?;
+    radio.with(|engine| engine.set_clarity(level))
 }
 
 #[tauri::command(async)]

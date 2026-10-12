@@ -25,6 +25,11 @@ export type Snapshot = {
   transmitting: boolean
   muted: boolean
   beeps: boolean
+  noiseSuppression: Strength
+  /** Quiet and loud talkers are brought to the same level. */
+  autoLevel: boolean
+  clarity: Strength
+  micAdvice: MicAdvice
   volume: number
   mic: Level
   speaker: Level
@@ -40,6 +45,9 @@ export type Snapshot = {
 }
 
 export type Direction = 'input' | 'output'
+/** How hard a stage of the voice processing works. */
+export type Strength = 'off' | 'normal' | 'strong'
+export type MicAdvice = 'fine' | 'quiet' | 'clipping'
 export type Route = 'speaker' | 'wired' | 'bluetooth'
 
 export type EngineEvent =
@@ -80,6 +88,10 @@ export const setTransmitting = (on: boolean) => invoke<void>('set_transmitting',
 export const setMuted = (muted: boolean) => invoke<void>('set_muted', { muted })
 export const setVolume = (volume: number) => invoke<void>('set_volume', { volume })
 export const setBeeps = (on: boolean) => invoke<void>('set_beeps', { on })
+export const setNoiseSuppression = (level: Strength) =>
+  invoke<void>('set_noise_suppression', { level })
+export const setAutoLevel = (on: boolean) => invoke<void>('set_auto_level', { on })
+export const setClarity = (level: Strength) => invoke<void>('set_clarity', { level })
 export const setPeerMuted = (peer: string, muted: boolean) =>
   invoke<void>('set_peer_muted', { peer, muted })
 

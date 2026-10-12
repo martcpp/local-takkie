@@ -17,6 +17,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, LineGauge, List, ListItem, ListState, Paragraph},
 };
 use takkie_core::ptt::{PttChange, PttController, PttInput, PttMode};
+use takkie_core::voice::MicAdvice;
 use takkie_core::{ChannelId, Passphrase, PeerId};
 use takkie_engine::{Direction as Device, Engine, EngineEvent, EngineSnapshot, PeerInfo};
 
@@ -64,7 +65,7 @@ impl KeyReleases {
 }
 
 /// Every key the app answers to, as the help popup lists them.
-const BINDINGS: [(&str, &str); 12] = [
+const BINDINGS: [(&str, &str); 15] = [
     ("SPACE", "talk (hold or toggle, see the footer)"),
     ("T", "switch between hold and toggle"),
     ("M", "mute or unmute what you hear"),
@@ -72,6 +73,9 @@ const BINDINGS: [(&str, &str); 12] = [
     ("↑ / ↓", "pick someone in the peer list"),
     ("X", "mute or unmute the picked person"),
     ("B", "beeps on or off (when talk starts and ends)"),
+    ("N", "noise removal: off, normal or strong"),
+    ("L", "even out a quiet or loud voice, on or off"),
+    ("C", "clarity lift: off, normal or strong"),
     ("D", "show the microphone and speaker in use"),
     ("1-9, 0", "switch to channel 1 to 10"),
     ("P", "set or clear this channel's passphrase"),
@@ -93,6 +97,9 @@ enum Key {
     Pick(i8),
     MutePeer,
     Beeps,
+    Noise,
+    AutoLevel,
+    Clarity,
 }
 
 const MAX_SECRET: usize = 128;
@@ -163,6 +170,9 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         (KeyCode::Down, _) => Some(Key::Pick(1)),
         (KeyCode::Char('x' | 'X'), _) => Some(Key::MutePeer),
         (KeyCode::Char('b' | 'B'), _) => Some(Key::Beeps),
+        (KeyCode::Char('n' | 'N'), _) => Some(Key::Noise),
+        (KeyCode::Char('l' | 'L'), _) => Some(Key::AutoLevel),
+        (KeyCode::Char('c' | 'C'), _) => Some(Key::Clarity),
         (KeyCode::Char(digit @ '0'..='9'), _) => {
             let number = match digit {
                 '0' => 10,
@@ -452,6 +462,25 @@ fn run_app(
                         "🔕 Beeps off"
                     });
                 }
+                Some(Key::Noise) => {
+                    let level = snapshot.noise_suppression.next();
+                    engine.set_noise_suppression(level);
+                    app.log.push(format!("🧹 Noise removal {}", level.name()));
+                }
+                Some(Key::AutoLevel) => {
+                    let on = !snapshot.auto_level;
+                    engine.set_auto_level(on);
+                    app.log.push(if on {
+                        "🎚️ Even volume on"
+                    } else {
+                        "🎚️ Even volume off"
+                    });
+                }
+                Some(Key::Clarity) => {
+                    let clarity = snapshot.clarity.next();
+                    engine.set_clarity(clarity);
+                    app.log.push(format!("✨ Clarity {}", clarity.name()));
+                }
                 Some(Key::Channel(_)) | None => {}
             }
         }
@@ -560,7 +589,7 @@ fn ui(f: &mut Frame, app: &App, snapshot: &EngineSnapshot) {
         .constraints([
             Constraint::Min(5),
             Constraint::Length(3),
-            Constraint::Length(5),
+            Constraint::Length(6),
         ])
         .split(columns[0]);
 
@@ -749,6 +778,7 @@ fn render_levels(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot) {
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(inner);
     let gauge = |label: &'static str, peak: f32, color: Color| {
@@ -779,6 +809,27 @@ fn render_levels(f: &mut Frame, area: Rect, snapshot: &EngineSnapshot) {
             ),
         ])),
         rows[2],
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Noise   ", Style::default().fg(Color::Gray)),
+            Span::raw(snapshot.noise_suppression.name()),
+            Span::styled("    Even  ", Style::default().fg(Color::Gray)),
+            Span::raw(if snapshot.auto_level { "on" } else { "off" }),
+            Span::styled("    Clarity  ", Style::default().fg(Color::Gray)),
+            Span::raw(snapshot.clarity.name()),
+            Span::styled(
+                match snapshot.mic_advice {
+                    MicAdvice::Fine => "",
+                    MicAdvice::TooQuiet => "  MIC TOO QUIET",
+                    MicAdvice::Clipping => "  MIC TOO LOUD",
+                },
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        rows[3],
     );
 }
 
@@ -933,6 +984,7 @@ mod tests {
 
     use takkie_core::ChannelId;
     use takkie_core::dsp::Level;
+    use takkie_core::voice::Strength;
     use takkie_engine::{EngineStats, PeerInfo};
 
     use super::*;
@@ -973,6 +1025,9 @@ mod tests {
         assert_eq!(press('p'), Some(Key::Passphrase));
         assert_eq!(press('x'), Some(Key::MutePeer));
         assert_eq!(press('B'), Some(Key::Beeps));
+        assert_eq!(press('n'), Some(Key::Noise));
+        assert_eq!(press('L'), Some(Key::AutoLevel));
+        assert_eq!(press('c'), Some(Key::Clarity));
         assert_eq!(key_action(KeyCode::Up, Press), Some(Key::Pick(-1)));
         assert_eq!(key_action(KeyCode::Down, Press), Some(Key::Pick(1)));
         assert_eq!(key_action(KeyCode::Down, Release), None);
@@ -1144,6 +1199,27 @@ mod tests {
     }
 
     #[test]
+    fn the_voice_processing_shows_in_the_levels_box() {
+        let mut state = snapshot(Vec::new());
+        let shown = screen(&app(), &state);
+        assert!(shown.contains("Noise   normal"), "{shown}");
+        assert!(shown.contains("Even  on"));
+        assert!(shown.contains("Clarity  normal"));
+        assert!(!shown.contains("MIC TOO"));
+        state.noise_suppression = Strength::Strong;
+        state.auto_level = false;
+        state.clarity = Strength::Off;
+        state.mic_advice = MicAdvice::Clipping;
+        let shown = screen(&app(), &state);
+        assert!(shown.contains("Noise   strong"), "{shown}");
+        assert!(shown.contains("Even  off"));
+        assert!(shown.contains("Clarity  off"));
+        assert!(shown.contains("MIC TOO LOUD"));
+        state.mic_advice = MicAdvice::TooQuiet;
+        assert!(screen(&app(), &state).contains("MIC TOO QUIET"));
+    }
+
+    #[test]
     fn device_events_are_remembered_for_the_d_key() {
         let mut app = app();
         app.remember_device(&EngineEvent::DeviceStarted {
@@ -1310,6 +1386,10 @@ mod tests {
             transmitting: false,
             muted: false,
             beeps: false,
+            noise_suppression: Strength::Normal,
+            auto_level: true,
+            clarity: Strength::Normal,
+            mic_advice: MicAdvice::Fine,
             volume: 1.0,
             mic: Level::default(),
             speaker: Level::default(),

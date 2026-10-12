@@ -4,12 +4,15 @@ import type { Access, Peer, Snapshot } from './engine'
 import {
   MAX_LOG,
   NO_NETWORK,
+  asStrength,
   channelState,
   describe,
   initial,
   label,
   meter,
   micGate,
+  micWarning,
+  nextStrength,
   ordered,
   outputLabel,
   withAccess,
@@ -38,6 +41,10 @@ const snapshot = (peers: Peer[] = []): Snapshot => ({
   transmitting: false,
   muted: false,
   beeps: false,
+  noiseSuppression: 'normal',
+  autoLevel: true,
+  clarity: 'normal',
+  micAdvice: 'fine',
   volume: 1,
   mic: { rms: 0, peak: 0 },
   speaker: { rms: 0, peak: 0 },
@@ -273,5 +280,25 @@ suite('peer order', () => {
     ]
     expect(ordered(peers, 2).map((p) => p.name)).toEqual(['bob', 'zed', '', 'Amy'])
     expect(peers[0].name).toBe('zed')
+  })
+})
+
+suite('voice processing', () => {
+  test('a strength button steps off, normal, strong and round again', () => {
+    expect(nextStrength('off')).toBe('normal')
+    expect(nextStrength('normal')).toBe('strong')
+    expect(nextStrength('strong')).toBe('off')
+  })
+
+  test('only a real strength is taken from storage', () => {
+    expect(asStrength('strong')).toBe('strong')
+    expect(asStrength('loud')).toBeNull()
+    expect(asStrength(null)).toBeNull()
+  })
+
+  test('the microphone warning says what to do', () => {
+    expect(micWarning('fine')).toBeNull()
+    expect(micWarning('clipping')).toContain('move back')
+    expect(micWarning('quiet')).toContain('move closer')
   })
 })
