@@ -5,7 +5,7 @@
 //!
 //! `--raw` leaves the voice processing out, to compare with and without.
 //! `--noise off|normal|strong` sets the noise suppression, `--level on|off`
-//! the automatic level.
+//! the automatic level, `--clarity off|normal|strong` the clarity lift.
 
 use std::error::Error;
 use std::io::{self, Write};
@@ -15,17 +15,18 @@ use std::time::Duration;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use takkie_core::dsp::downmix_to_mono;
-use takkie_engine::Direction;
 use takkie_engine::audio::config::{PREFERRED_RATE, input_config};
 use takkie_engine::audio::devices::find_device;
 use takkie_engine::audio::lab::{Clip, Loss, Report, far_end, frames, process};
 use takkie_engine::audio::stream::CpalSource;
 use takkie_engine::audio::tx::Framer;
 use takkie_engine::audio::voice::{NoiseSuppression, VoiceControls};
+use takkie_engine::{Clarity, Direction};
 
 const USAGE: &str = "usage:
   lab record <out.wav> [--seconds N] [--input NAME]
-  lab send <in.wav> <out.wav> [--loss PERCENT] [--raw] [--noise off|normal|strong] [--level on|off]";
+  lab send <in.wav> <out.wav> [--loss PERCENT] [--raw] [--noise off|normal|strong] [--level on|off]
+      [--clarity off|normal|strong]";
 
 type Outcome<T> = Result<T, Box<dyn Error>>;
 
@@ -66,6 +67,12 @@ fn run() -> Outcome<()> {
                 Some("on") => true,
                 Some("off") => false,
                 _ => return Err("--level is on or off".into()),
+            }),
+            "--clarity" => voice.set_clarity(match rest.next().map(String::as_str) {
+                Some("off") => Clarity::Off,
+                Some("normal") => Clarity::Normal,
+                Some("strong") => Clarity::Strong,
+                _ => return Err("--clarity is off, normal or strong".into()),
             }),
             other => paths.push(other),
         }

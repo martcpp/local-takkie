@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
 use nnnoiseless::DenoiseState;
 use takkie_core::dsp::{Biquad, Level};
-use takkie_core::voice::Leveller;
+use takkie_core::voice::{Clarity, Leveller, Shaper};
 
 use super::config::PREFERRED_RATE;
 
@@ -52,6 +52,7 @@ pub struct VoiceControls {
     low_cut: AtomicBool,
     noise: AtomicU8,
     auto_level: AtomicBool,
+    clarity: AtomicU8,
 }
 
 impl Default for VoiceControls {
@@ -60,6 +61,7 @@ impl Default for VoiceControls {
             low_cut: AtomicBool::new(true),
             noise: AtomicU8::new(NoiseSuppression::default() as u8),
             auto_level: AtomicBool::new(true),
+            clarity: AtomicU8::new(Clarity::default() as u8),
         }
     }
 }
@@ -72,6 +74,7 @@ impl VoiceControls {
             low_cut: AtomicBool::new(false),
             noise: AtomicU8::new(NoiseSuppression::Off as u8),
             auto_level: AtomicBool::new(false),
+            clarity: AtomicU8::new(Clarity::Off as u8),
         }
     }
 
@@ -106,6 +109,21 @@ impl VoiceControls {
     #[must_use]
     pub fn auto_level(&self) -> bool {
         self.auto_level.load(Relaxed)
+    }
+
+    /// Sets how much the part of the voice that carries words is lifted.
+    pub fn set_clarity(&self, clarity: Clarity) {
+        self.clarity.store(clarity as u8, Relaxed);
+    }
+
+    /// How much the part of the voice that carries words is lifted.
+    #[must_use]
+    pub fn clarity(&self) -> Clarity {
+        match self.clarity.load(Relaxed) {
+            0 => Clarity::Off,
+            2 => Clarity::Strong,
+            _ => Clarity::Normal,
+        }
     }
 }
 
@@ -181,6 +199,7 @@ pub struct VoiceChain {
     low_cut: Biquad,
     denoiser: Denoiser,
     leveller: Leveller,
+    shaper: Shaper,
 }
 
 impl Default for VoiceChain {
@@ -189,6 +208,7 @@ impl Default for VoiceChain {
             low_cut: Biquad::high_pass(LOW_CUT_HZ, PREFERRED_RATE),
             denoiser: Denoiser::new(),
             leveller: Leveller::new(PREFERRED_RATE),
+            shaper: Shaper::new(PREFERRED_RATE),
         }
     }
 }
@@ -204,6 +224,7 @@ impl VoiceChain {
         if controls.auto_level() {
             self.leveller.process(frame);
         }
+        self.shaper.process(frame, controls.clarity());
         heard
     }
 
@@ -292,6 +313,19 @@ mod tests {
         assert!(controls.low_cut());
         assert_eq!(controls.noise_suppression(), NoiseSuppression::Normal);
         assert!(controls.auto_level());
+        assert_eq!(controls.clarity(), Clarity::Normal);
+    }
+
+    #[test]
+    fn clarity_comes_last_so_its_lift_is_not_levelled_away() {
+        let controls = VoiceControls::raw();
+        let presence: Vec<f32> = (0..48_000)
+            .map(|i| 0.1 * (TAU * 3_000.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let flat = settled(&run(presence.clone(), &controls));
+        controls.set_clarity(Clarity::Strong);
+        let lifted = settled(&run(presence, &controls));
+        assert!((20.0 * (lifted / flat).log10() - 7.0).abs() < 0.3);
     }
 
     #[test]

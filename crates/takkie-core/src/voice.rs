@@ -1,7 +1,7 @@
 //! Shaping a voice before it is sent: pure arithmetic on 48 kHz mono frames,
 //! with no allocation.
 
-use crate::dsp::Level;
+use crate::dsp::{Biquad, Level, soft_limit};
 
 // Where speech should sit: about -20 dB, which leaves its peaks under full scale.
 const TARGET_DB: f32 = -20.0;
@@ -109,6 +109,74 @@ impl Leveller {
     }
 }
 
+/// How much the part of a voice that carries the words is lifted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Clarity {
+    /// The voice as it is.
+    Off,
+    /// A gentle lift.
+    #[default]
+    Normal,
+    /// A strong lift, for a loud room and a small speaker.
+    Strong,
+}
+
+impl Clarity {
+    // (lift around 3 kHz, cut below 250 Hz), in dB.
+    fn shape(self) -> Option<(f32, f32)> {
+        match self {
+            Self::Off => None,
+            Self::Normal => Some((4.0, -3.0)),
+            Self::Strong => Some((7.0, -5.0)),
+        }
+    }
+}
+
+// Consonants sit between 2 and 4 kHz; a wide band around 3 kHz covers them.
+const PRESENCE_HZ: f32 = 3_000.0;
+const PRESENCE_Q: f32 = 0.8;
+// Below this a voice is body, not words, and it uses up the loudness.
+const BODY_HZ: f32 = 250.0;
+
+/// Moves a voice's energy to where the words are, so it cuts through noise
+/// at the listener's end, and keeps the result inside full scale.
+#[derive(Clone, Debug)]
+pub struct Shaper {
+    sample_rate: u32,
+    clarity: Clarity,
+    presence: Biquad,
+    body: Biquad,
+}
+
+impl Shaper {
+    /// A shaper for frames at `sample_rate`, off until told otherwise.
+    #[must_use]
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            sample_rate,
+            clarity: Clarity::Off,
+            presence: Biquad::peaking(PRESENCE_HZ, 0.0, PRESENCE_Q, sample_rate),
+            body: Biquad::low_shelf(BODY_HZ, 0.0, sample_rate),
+        }
+    }
+
+    /// Shapes one frame in place.
+    pub fn process(&mut self, frame: &mut [f32], clarity: Clarity) {
+        if clarity != self.clarity {
+            self.clarity = clarity;
+            let (lift, cut) = clarity.shape().unwrap_or_default();
+            self.presence = Biquad::peaking(PRESENCE_HZ, lift, PRESENCE_Q, self.sample_rate);
+            self.body = Biquad::low_shelf(BODY_HZ, cut, self.sample_rate);
+        }
+        if clarity == Clarity::Off {
+            return;
+        }
+        self.presence.process(frame);
+        self.body.process(frame);
+        soft_limit(frame);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::f32::consts::TAU;
@@ -200,6 +268,65 @@ mod tests {
             .map(|pair| (pair[1] - pair[0]).abs())
             .fold(0.0, f32::max);
         assert!(biggest_jump < 0.001, "{biggest_jump}");
+    }
+
+    fn tone(frequency: f32, amplitude: f32) -> Vec<f32> {
+        (0..RATE as usize)
+            .map(|i| amplitude * (TAU * frequency * i as f32 / RATE as f32).sin())
+            .collect()
+    }
+
+    fn shaped(clarity: Clarity, mut sound: Vec<f32>) -> f32 {
+        let before = Level::of(&sound[24_000..]).rms;
+        let mut shaper = Shaper::new(RATE);
+        for frame in sound.chunks_mut(FRAME) {
+            shaper.process(frame, clarity);
+        }
+        20.0 * (Level::of(&sound[24_000..]).rms / before).log10()
+    }
+
+    #[test]
+    fn clarity_lifts_the_consonants_and_thins_the_body() {
+        assert!((shaped(Clarity::Normal, tone(3_000.0, 0.1)) - 4.0).abs() < 0.2);
+        assert!((shaped(Clarity::Normal, tone(120.0, 0.1)) + 3.0).abs() < 0.5);
+        assert!(shaped(Clarity::Normal, tone(700.0, 0.1)).abs() < 1.0);
+        assert!((shaped(Clarity::Strong, tone(3_000.0, 0.1)) - 7.0).abs() < 0.2);
+    }
+
+    #[test]
+    fn clarity_off_leaves_the_frame_alone() {
+        let sound = tone(3_000.0, 0.95);
+        let mut out = sound.clone();
+        Shaper::new(RATE).process(&mut out, Clarity::Off);
+        assert_eq!(out, sound);
+    }
+
+    #[test]
+    fn a_lifted_loud_voice_stays_inside_full_scale() {
+        let mut sound = tone(3_000.0, 0.9);
+        let mut shaper = Shaper::new(RATE);
+        for frame in sound.chunks_mut(FRAME) {
+            shaper.process(frame, Clarity::Strong);
+        }
+        assert!(Level::of(&sound).peak <= 1.0);
+    }
+
+    #[test]
+    fn changing_the_setting_mid_stream_takes_effect() {
+        let mut shaper = Shaper::new(RATE);
+        let mut sound = tone(3_000.0, 0.1);
+        let (first, second) = sound.split_at_mut(24_000);
+        for frame in first.chunks_mut(FRAME) {
+            shaper.process(frame, Clarity::Normal);
+        }
+        for frame in second.chunks_mut(FRAME) {
+            shaper.process(frame, Clarity::Strong);
+        }
+        let (normal, strong) = (
+            Level::of(&first[12_000..]).rms,
+            Level::of(&second[12_000..]).rms,
+        );
+        assert!((20.0 * (strong / normal).log10() - 3.0).abs() < 0.3);
     }
 
     #[test]
