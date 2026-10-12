@@ -113,6 +113,22 @@ Release builds use three ABIs: `--target aarch64 --target armv7 --target x86_64`
 The first build for each takes several minutes. Xiaomi phones also need
 "Install via USB" turned on in the developer options.
 
+## Listening to a change in the voice
+
+The voice lab records a clip and writes what the far end would hear, so a
+change to the audio path can be judged by ear on the same recording:
+
+```bash
+cargo run -p takkie-engine --example lab -- record clip.wav --seconds 10
+cargo run -p takkie-engine --example lab -- send clip.wav heard.wav
+cargo run -p takkie-engine --example lab -- send clip.wav lossy.wav --loss 10
+```
+
+`send` takes any WAV file, so a clip recorded on a phone works too. It prints
+the peak, the average level and the background level, in dB below full
+scale, before and after. With `--loss` the same packets are lost on every
+run. Keep clips out of the repo.
+
 ## Checking discovery on a real network
 
 The tests never touch real mDNS, because CI runners may block multicast.
