@@ -78,6 +78,12 @@ fn start_radio(app: AppHandle) -> Result<(), String> {
         display_name: device_name(),
         ..EngineConfig::default()
     };
+    // Before the engine, so its first mDNS answers aren't dropped.
+    match mobile::set_multicast_lock(&app, true) {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!("the Wi-Fi multicast lock wasn't taken; discovery may be slow"),
+        Err(error) => tracing::warn!("no Wi-Fi multicast lock: {error}"),
+    }
     let events = app.clone();
     let started = app.state::<Radio>().start(config, move |event| {
         tracing::debug!(?event, "engine event");
@@ -110,6 +116,7 @@ pub fn run() -> tauri::Result<()> {
         .try_init();
     let app = tauri::Builder::default()
         .plugin(mobile::permissions())
+        .plugin(mobile::multicast())
         .manage(Radio::new())
         .invoke_handler(tauri::generate_handler![
             start_radio,
