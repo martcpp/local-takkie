@@ -43,6 +43,16 @@ impl Radio {
         self.talk()
     }
 
+    /// Whether the headset button is what keeps us talking.
+    pub fn headset_talks(&self) -> bool {
+        self.headset_talks.load(Relaxed)
+    }
+
+    /// How loud the microphone is right now, if the engine runs.
+    pub fn mic_level(&self) -> Option<f32> {
+        self.with(|engine| engine.snapshot().mic.rms).ok()
+    }
+
     fn talk(&self) -> Result<(), String> {
         let on = self.screen_talks.load(Relaxed) || self.headset_talks.load(Relaxed);
         self.with(|engine| engine.set_transmitting(on))

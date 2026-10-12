@@ -58,7 +58,7 @@
       <button
         aria-pressed={headset.talks}
         class:on={headset.talks}
-        title="Hold the headset button to talk"
+        title="Click the headset button to talk, and click again to stop"
         onclick={() => setHeadsetButton(!headset.talks)}
       >
         {headset.talks ? '🎧 Headset button talks' : '🎧 Headset button off'}
