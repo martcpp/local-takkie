@@ -1,7 +1,16 @@
 <script lang="ts">
   import type { Snapshot } from './engine'
   import { meter, outputLabel } from './state'
-  import { onPhone, screen, setBeeps, setKeepScreenOn, setMuted, setVolume } from './store.svelte'
+  import {
+    headset,
+    onPhone,
+    screen,
+    setBeeps,
+    setHeadsetButton,
+    setKeepScreenOn,
+    setMuted,
+    setVolume,
+  } from './store.svelte'
 
   let { snapshot }: { snapshot: Snapshot } = $props()
 
@@ -45,6 +54,14 @@
         onclick={() => setKeepScreenOn(!screen.keptOn)}
       >
         {screen.keptOn ? '☀️ Screen stays on' : '🌙 Screen can sleep'}
+      </button>
+      <button
+        aria-pressed={headset.talks}
+        class:on={headset.talks}
+        title="Click the headset button to talk, and click again to stop"
+        onclick={() => setHeadsetButton(!headset.talks)}
+      >
+        {headset.talks ? '🎧 Headset button talks' : '🎧 Headset button off'}
       </button>
     {/if}
     <span class="buffer">Buffer {snapshot.bufferMs} ms</span>

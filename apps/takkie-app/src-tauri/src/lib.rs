@@ -1,6 +1,7 @@
 //! The local-takkie desktop and Android app: a Tauri window around the engine.
 
 mod commands;
+mod headset;
 mod mobile;
 mod view;
 
@@ -122,6 +123,7 @@ fn start_radio(app: AppHandle) -> Result<(), String> {
             tracing::warn!("no foreground service, so the radio stops with the screen: {error}");
         }
         stop_on_request(app.clone());
+        follow_headset(app.clone());
         watch_surroundings(app.clone());
         publish_snapshots(app);
     }
@@ -203,6 +205,86 @@ fn stop_on_request(app: AppHandle) {
 #[cfg(not(target_os = "android"))]
 fn stop_on_request(_app: AppHandle) {}
 
+/// Set once the thread that follows the headset button is running.
+struct HeadsetFollowed(AtomicBool);
+
+/// How often the microphone level is looked at while a click keeps us talking.
+const LISTEN_EVERY: Duration = Duration::from_millis(100);
+
+// Someone who forgot the second click shouldn't leave their microphone open
+// to the whole channel. Ends as soon as the talking does.
+fn stop_when_quiet(app: AppHandle) {
+    let listening = thread::Builder::new()
+        .name("takkie-app-quiet".into())
+        .spawn(move || {
+            let mut watch = headset::SpeechWatch::new(Instant::now());
+            loop {
+                thread::sleep(LISTEN_EVERY);
+                let radio = app.state::<Radio>();
+                if !radio.headset_talks() {
+                    return;
+                }
+                let Some(level) = radio.mic_level() else {
+                    return;
+                };
+                let now = Instant::now();
+                watch.hear(level, now);
+                if watch.gone_quiet(now) {
+                    tracing::info!("stopped talking: no speech for a while");
+                    let _ = radio.talk_from_headset(false);
+                    let stopped = EventView::Warning {
+                        text: format!(
+                            "Stopped talking: no speech for {} seconds",
+                            headset::QUIET_LIMIT.as_secs()
+                        ),
+                    };
+                    if let Err(error) = app.emit(ENGINE_EVENT, stopped) {
+                        tracing::debug!("event not sent: {error}");
+                    }
+                    return;
+                }
+            }
+        });
+    if let Err(error) = listening {
+        tracing::warn!("a forgotten microphone won't close by itself: {error}");
+    }
+}
+
+// One thread for the life of the app: a second one would take every other
+// press away from the first. On a computer it ends at once.
+fn follow_headset(app: AppHandle) {
+    if app.state::<HeadsetFollowed>().0.swap(true, Relaxed) {
+        return;
+    }
+    let following = thread::Builder::new()
+        .name("takkie-app-headset".into())
+        .spawn(move || {
+            loop {
+                match mobile::wait_for_button(&app) {
+                    // A click starts talking and the next click stops it.
+                    // Holding can't work on a wired earpiece: its button
+                    // shorts out its own microphone while it is down.
+                    Ok(true) => {
+                        let radio = app.state::<Radio>();
+                        let talking = !radio.headset_talks();
+                        tracing::info!(talking, "headset button");
+                        if radio.talk_from_headset(talking).is_ok() && talking {
+                            stop_when_quiet(app.clone());
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::debug!("not following a headset button: {error}");
+                        return;
+                    }
+                }
+            }
+        });
+    if let Err(error) = following {
+        tracing::warn!("the headset button won't work: {error}");
+    }
+}
+
 #[tauri::command(async)]
 fn stop_radio(app: AppHandle) {
     turn_off(&app);
@@ -236,8 +318,10 @@ pub fn run() -> tauri::Result<()> {
         .plugin(mobile::screen())
         .plugin(mobile::network())
         .plugin(mobile::route())
+        .plugin(mobile::headset())
         .manage(Radio::new())
         .manage(OnScreen(AtomicBool::new(true)))
+        .manage(HeadsetFollowed(AtomicBool::new(false)))
         .invoke_handler(tauri::generate_handler![
             start_radio,
             stop_radio,
@@ -246,6 +330,7 @@ pub fn run() -> tauri::Result<()> {
             commands::request_permissions,
             commands::open_app_settings,
             commands::set_keep_screen_on,
+            commands::set_headset_button,
             commands::snapshot,
             commands::set_transmitting,
             commands::set_channel,
