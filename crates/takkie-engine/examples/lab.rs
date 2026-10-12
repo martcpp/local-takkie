@@ -1,7 +1,9 @@
 //! The voice lab: record a clip, then hear what the far end would get.
 //!
 //! `cargo run -p takkie-engine --example lab -- record clip.wav [--seconds N] [--input NAME]`
-//! `cargo run -p takkie-engine --example lab -- send clip.wav heard.wav [--loss PERCENT]`
+//! `cargo run -p takkie-engine --example lab -- send clip.wav heard.wav [--loss PERCENT] [--raw]`
+//!
+//! `--raw` leaves the voice processing out, to compare with and without.
 
 use std::error::Error;
 use std::io::{self, Write};
@@ -14,13 +16,14 @@ use takkie_core::dsp::downmix_to_mono;
 use takkie_engine::Direction;
 use takkie_engine::audio::config::{PREFERRED_RATE, input_config};
 use takkie_engine::audio::devices::find_device;
-use takkie_engine::audio::lab::{Clip, Loss, Report, far_end, frames};
+use takkie_engine::audio::lab::{Clip, Loss, Report, far_end, frames, process};
 use takkie_engine::audio::stream::CpalSource;
 use takkie_engine::audio::tx::Framer;
+use takkie_engine::audio::voice::VoiceControls;
 
 const USAGE: &str = "usage:
   lab record <out.wav> [--seconds N] [--input NAME]
-  lab send <in.wav> <out.wav> [--loss PERCENT]";
+  lab send <in.wav> <out.wav> [--loss PERCENT] [--raw]";
 
 type Outcome<T> = Result<T, Box<dyn Error>>;
 
@@ -40,6 +43,7 @@ fn run() -> Outcome<()> {
     let mut seconds = 10_u32;
     let mut input = None;
     let mut loss = Loss::default();
+    let mut raw = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -49,12 +53,13 @@ fn run() -> Outcome<()> {
                 loss = Loss::percent(value(rest.next(), "--loss")?)
                     .ok_or("--loss is a percentage, 0 to 100")?;
             }
+            "--raw" => raw = true,
             other => paths.push(other),
         }
     }
     match paths.as_slice() {
         ["record", out] => record(out, seconds, input),
-        ["send", from, to] => send(from, to, loss),
+        ["send", from, to] => send(from, to, loss, raw),
         _ => Err(USAGE.into()),
     }
 }
@@ -88,9 +93,13 @@ fn record(path: &str, seconds: u32, input: Option<&str>) -> Outcome<()> {
     Ok(())
 }
 
-fn send(from: &str, to: &str, loss: Loss) -> Outcome<()> {
+fn send(from: &str, to: &str, loss: Loss, raw: bool) -> Outcome<()> {
     let mut out = io::stdout().lock();
-    let voice = frames(&mut read_wav(from)?)?;
+    let mut voice = frames(&mut read_wav(from)?)?;
+    writeln!(out, "clip   {}", Report::of(&voice))?;
+    if !raw {
+        process(&mut voice, &VoiceControls::default());
+    }
     let heard = far_end(&voice, loss)?;
     write_wav(to, &heard)?;
     writeln!(out, "sent   {}", Report::of(&voice))?;

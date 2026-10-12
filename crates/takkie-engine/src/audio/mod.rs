@@ -20,5 +20,7 @@ pub mod session;
 pub mod stream;
 /// The sending thread.
 pub mod tx;
+/// Voice processing before the encoder.
+pub mod voice;
 
 pub use io::{AudioSink, AudioSource};

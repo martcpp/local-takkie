@@ -14,6 +14,7 @@ use super::io::{AudioSink, AudioSource};
 use super::mix::{MixError, MixInput, MixShared, MixThread};
 use super::stream::{Counters, CpalSink, CpalSource, OpenError};
 use super::tx::{LevelMeter, TxError, TxEvent, TxThread};
+use super::voice::VoiceControls;
 
 const RETRY: Duration = Duration::from_secs(2);
 
@@ -136,6 +137,8 @@ pub struct Wiring {
     pub transmitting: Arc<AtomicBool>,
     /// The mic level.
     pub level: Arc<LevelMeter>,
+    /// Switches for the voice processing.
+    pub voice: Arc<VoiceControls>,
     /// Encoded packets out.
     pub tx_events: Sender<TxEvent>,
     /// Packets in, and senders leaving.
@@ -334,6 +337,7 @@ fn spawn_tx(
         opened.stream,
         Arc::clone(&wiring.transmitting),
         Arc::clone(&wiring.level),
+        Arc::clone(&wiring.voice),
         wiring.tx_events.clone(),
     )?;
     events.extend(opened.warning.map(AudioEvent::Warning));
@@ -442,6 +446,7 @@ mod tests {
         let wiring = Wiring {
             transmitting: Arc::default(),
             level: Arc::default(),
+            voice: Arc::default(),
             tx_events,
             packets,
             mix: MixShared::default(),
@@ -534,6 +539,7 @@ mod tests {
         let wiring = Wiring {
             transmitting: Arc::default(),
             level: Arc::default(),
+            voice: Arc::default(),
             tx_events,
             packets,
             mix: MixShared::default(),
@@ -547,6 +553,7 @@ mod tests {
         Wiring {
             transmitting: Arc::default(),
             level: Arc::default(),
+            voice: Arc::default(),
             tx_events,
             packets,
             mix: MixShared::default(),

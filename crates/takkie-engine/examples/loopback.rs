@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wiring = Wiring {
         transmitting: Arc::clone(&mix.transmitting),
         level: Arc::clone(&level),
+        voice: Arc::default(),
         tx_events,
         packets: received,
         mix: mix.clone(),

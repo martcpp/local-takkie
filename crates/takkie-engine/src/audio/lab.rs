@@ -10,6 +10,7 @@ use super::codec::{CodecError, VoiceDecoder, VoiceEncoder};
 use super::io::AudioSource;
 use super::resample::{FRAME, ResampleError};
 use super::tx::Framer;
+use super::voice::{VoiceChain, VoiceControls};
 
 /// Why a lab run failed.
 #[derive(Debug, Error)]
@@ -68,6 +69,15 @@ pub fn frames(source: &mut dyn AudioSource) -> Result<Vec<f32>, LabError> {
         voice.extend_from_slice(frame);
     }
     Ok(voice)
+}
+
+/// Runs `voice` (48 kHz mono) through the voice processing `controls` has
+/// on, a frame at a time as the send thread does.
+pub fn process(voice: &mut [f32], controls: &VoiceControls) {
+    let mut chain = VoiceChain::default();
+    for frame in voice.chunks_mut(FRAME) {
+        chain.process(frame, controls);
+    }
 }
 
 /// How many packets in a hundred get lost on the way.

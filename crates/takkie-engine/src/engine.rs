@@ -412,6 +412,7 @@ impl Engine {
             Wiring {
                 transmitting: Arc::clone(&shared.transmitting),
                 level: Arc::clone(&shared.level),
+                voice: Arc::default(),
                 tx_events,
                 packets,
                 mix: shared.mix.clone(),

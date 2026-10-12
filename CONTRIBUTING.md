@@ -127,7 +127,7 @@ cargo run -p takkie-engine --example lab -- send clip.wav lossy.wav --loss 10
 `send` takes any WAV file, so a clip recorded on a phone works too. It prints
 the peak, the average level and the background level, in dB below full
 scale, before and after. With `--loss` the same packets are lost on every
-run. Keep clips out of the repo.
+run, and `--raw` leaves the voice processing out. Keep clips out of the repo.
 
 ## Checking discovery on a real network
 
