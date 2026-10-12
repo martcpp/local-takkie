@@ -2,7 +2,7 @@
 //! lock-free rings: no locks, allocation, logging or system calls (ROADMAP 5.4).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{
@@ -47,6 +47,8 @@ pub struct Counters {
     pub errors: AtomicU64,
     /// The device went away and the stream has to be rebuilt.
     pub lost: AtomicBool,
+    /// The most frames the speaker has asked for in one callback.
+    pub largest_request: AtomicU32,
 }
 
 impl Counters {
@@ -188,6 +190,10 @@ impl AudioSource for CpalSource {
     fn read(&mut self, out: &mut [f32]) -> usize {
         self.ring.pop_partial_slice(out).0.len()
     }
+
+    fn give_up(&mut self) {
+        self.counters.lost.store(true, Relaxed);
+    }
 }
 
 /// A speaker through cpal.
@@ -213,13 +219,19 @@ impl CpalSink {
     {
         let settings = StreamSettings::from(config);
         let channels = usize::from(settings.channels);
-        let (producer, mut consumer) = RingBuffer::new(settings.sample_rate as usize / 5);
+        // A second: some phones take 80 ms per callback, and the queue has
+        // to hold more than one of those.
+        let (producer, mut consumer) = RingBuffer::new(settings.sample_rate as usize);
         let counters = Arc::new(Counters::default());
         let on_data = Arc::clone(&counters);
         let on_error = Arc::clone(&counters);
         let stream = device.build_output_stream::<T, _, _>(
             &config.config(),
-            move |data: &mut [T], _| playback(data, channels, &mut consumer, &on_data.underruns),
+            move |data: &mut [T], _| {
+                let frames = u32::try_from(data.len() / channels.max(1)).unwrap_or(u32::MAX);
+                on_data.largest_request.fetch_max(frames, Relaxed);
+                playback(data, channels, &mut consumer, &on_data.underruns);
+            },
             move |error| on_error.record(&error),
             None,
         )?;
@@ -276,6 +288,10 @@ impl AudioSink for CpalSink {
 
     fn give_up(&mut self) {
         self.counters.lost.store(true, Relaxed);
+    }
+
+    fn largest_request(&self) -> usize {
+        self.counters.largest_request.load(Relaxed) as usize
     }
 }
 

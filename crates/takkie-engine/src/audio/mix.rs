@@ -11,7 +11,7 @@ use arc_swap::ArcSwap;
 use crossbeam_channel::Receiver;
 
 use takkie_core::dsp::{Level, Tone, apply_gain, mix_into, soft_limit};
-use takkie_core::jitter::{Insert, JitterBuffer, Playout};
+use takkie_core::jitter::{Config, Insert, JitterBuffer, Playout};
 use takkie_core::{PeerId, Seq};
 
 use super::codec::{CodecError, VoiceDecoder};
@@ -50,7 +50,23 @@ struct Talker {
     talking: bool,
     end: Option<Seq>,
     over: bool,
+    burst: usize,
 }
+
+/// The jitter buffer timing for a speaker that takes `burst` frames in one
+/// go: that many packets leave at once, so that many more have to be waiting.
+fn timing(burst: usize) -> Config {
+    let extra = Duration::from_millis(20) * u32::try_from(burst.saturating_sub(1)).unwrap_or(0);
+    let usual = Config::default();
+    Config {
+        target: usual.target + extra,
+        max: usual.max + extra,
+        ..usual
+    }
+}
+
+/// More than this and the delay is worse than the gaps it avoids.
+const MAX_BURST: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Cue {
@@ -83,6 +99,8 @@ pub struct MixCounters {
     pub silenced: AtomicU64,
     /// Audio waiting to be heard: jitter buffer plus speaker queue, in ms.
     pub buffer_ms: AtomicU32,
+    /// The most audio the speaker has asked for in one go, in ms.
+    pub block_ms: AtomicU32,
 }
 
 /// Playback settings the UI changes while audio runs.
@@ -203,6 +221,7 @@ pub struct Mixer {
     beep: Option<(Tone, Cue)>,
     was_transmitting: bool,
     sounded: bool,
+    burst: usize,
 }
 
 impl Mixer {
@@ -234,6 +253,7 @@ impl Mixer {
             beep: None,
             was_transmitting: false,
             sounded: false,
+            burst: 1,
         }
     }
 
@@ -268,15 +288,25 @@ impl Mixer {
     /// # Errors
     /// [`CodecError`] if a new sender's decoder can't be created.
     pub fn receive(&mut self, packet: RxPacket, now: Instant) -> Result<(), CodecError> {
+        let burst = self.burst;
         let talker = match self.talkers.entry(packet.sender) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                let talker = entry.into_mut();
+                // Between transmissions, so nothing waiting is thrown away.
+                if talker.burst != burst && talker.jitter.is_empty() && !talker.talking {
+                    talker.jitter = JitterBuffer::with_config(timing(burst));
+                    talker.burst = burst;
+                }
+                talker
+            }
             std::collections::hash_map::Entry::Vacant(entry) => entry.insert(Talker {
-                jitter: JitterBuffer::new(),
+                jitter: JitterBuffer::with_config(timing(burst)),
                 decoder: VoiceDecoder::new()?,
                 concealed: 0,
                 talking: false,
                 end: None,
                 over: false,
+                burst,
             }),
         };
         if packet.end {
@@ -313,6 +343,12 @@ impl Mixer {
             .unwrap_or(0)
     }
 
+    /// Says how many frames the speaker takes in one go, so each sender's
+    /// buffer keeps that many more waiting.
+    pub fn set_burst(&mut self, frames: usize) {
+        self.burst = frames.clamp(1, MAX_BURST);
+    }
+
     /// Whether any frame since the last call had something to hear in it.
     pub fn take_sounded(&mut self) -> bool {
         std::mem::take(&mut self.sounded)
@@ -336,6 +372,7 @@ impl Mixer {
                 talking,
                 end,
                 over,
+                ..
             },
         ) in &mut self.talkers
         {
@@ -452,6 +489,7 @@ pub struct Pacer {
     frame: Vec<f32>,
     device: Vec<f32>,
     target: usize,
+    frame_samples: usize,
 }
 
 impl Pacer {
@@ -467,7 +505,19 @@ impl Pacer {
             frame: vec![0.0; FRAME],
             device,
             target: device_rate as usize * TARGET_MS / 1_000,
+            frame_samples: (device_rate as usize / 50).max(1),
         })
+    }
+
+    /// How much to keep queued: the usual target, or one whole request
+    /// from the device plus a frame to spare, whichever is more.
+    fn wanted(&self, sink: &dyn AudioSink) -> usize {
+        self.target.max(sink.largest_request() + self.frame_samples)
+    }
+
+    /// How many frames the device takes in one go.
+    fn burst(&self, sink: &dyn AudioSink) -> usize {
+        sink.largest_request().div_ceil(self.frame_samples).max(1)
     }
 
     /// Mixes frames into `sink` until it holds the target, and returns how
@@ -482,7 +532,8 @@ impl Pacer {
         now: Instant,
     ) -> Result<usize, ResampleError> {
         let mut made = 0;
-        while sink.queued() < self.target {
+        let wanted = self.wanted(sink);
+        while sink.queued() < wanted {
             mixer.tick(now, &mut self.frame);
             let written = self.resampler.process(&self.frame, &mut self.device)?;
             made += 1;
@@ -569,6 +620,7 @@ impl Playback {
         sink: &mut dyn AudioSink,
         now: Instant,
     ) -> Result<(), ResampleError> {
+        mixer.set_burst(self.pacer.burst(sink));
         if self.playing {
             self.pacer.fill(mixer, sink, now)?;
             if mixer.take_sounded() {
@@ -613,7 +665,7 @@ impl Playback {
 
     fn watch(&mut self, sink: &mut dyn AudioSink, now: Instant) {
         let queued = sink.queued();
-        if queued != self.queued || queued < self.pacer.target {
+        if queued != self.queued || queued < self.pacer.wanted(sink) {
             self.queued = queued;
             self.moved = now;
         } else if !self.given_up && now.saturating_duration_since(self.moved) >= STALLED_AFTER {
@@ -674,6 +726,10 @@ impl MixThread {
                     counting
                         .buffer_ms
                         .store(u32::try_from(waiting).unwrap_or(u32::MAX), Relaxed);
+                    let block = sink.largest_request() * 1_000 / rate;
+                    counting
+                        .block_ms
+                        .store(u32::try_from(block).unwrap_or(u32::MAX), Relaxed);
                     let now_talking = mixer.talking();
                     if **talking.load() != now_talking {
                         talking.store(Arc::new(now_talking));
@@ -1386,6 +1442,55 @@ mod tests {
         }
         assert!(sink.has_given_up());
         assert!(playback.is_playing());
+    }
+
+    #[test]
+    fn a_speaker_that_takes_80_ms_at_a_time_never_runs_dry() {
+        let t0 = Instant::now();
+        let sent = packets(440.0, 90);
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 48_000);
+        sink.ask_for(3_840);
+        let mut playback = Playback::new(48_000, false, t0).unwrap();
+        for step in 0..480_u32 {
+            let now = t0 + STEP * step;
+            playback.step(&mut mixer, &mut sink, now).unwrap();
+            if step % 4 == 0
+                && let Some(payload) = sent.get(step as usize / 4)
+            {
+                let mut packet = rx(1, step as usize / 4, payload);
+                packet.end = step as usize / 4 + 1 == sent.len();
+                mixer.receive(packet, now).unwrap();
+            }
+            if step % 16 == 15 {
+                sink.play(3_840);
+            }
+        }
+        assert_eq!(sink.underruns(), 0);
+        let counters = mixer.counters();
+        assert_eq!(counters.concealed.load(Relaxed), 0);
+        assert_eq!(counters.silenced.load(Relaxed), 0);
+        assert!(loud(sink.played()) > 80 * FRAME, "most of it was heard");
+    }
+
+    #[test]
+    fn an_ordinary_speaker_keeps_the_short_queue() {
+        let t0 = Instant::now();
+        let mut mixer = Mixer::new();
+        let mut sink = FakeSink::new(48_000, 48_000);
+        sink.ask_for(480);
+        let mut playback = Playback::new(48_000, false, t0).unwrap();
+        playback.step(&mut mixer, &mut sink, t0).unwrap();
+        assert!(
+            sink.queued() <= 48_000 * 60 / 1_000,
+            "{} queued",
+            sink.queued()
+        );
+        assert_eq!(timing(1), Config::default());
+        assert_eq!(
+            timing(4).target,
+            Config::default().target + Duration::from_millis(60)
+        );
     }
 
     #[test]
