@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -29,6 +30,8 @@ private const val ACTION_STOP = "com.martcpp.takkie.STOP"
 // suspends the multicast lock, all without an error.
 class RadioService : Service() {
   private var lock: WifiManager.MulticastLock? = null
+  private var wifi: WifiManager.WifiLock? = null
+  private var awake: PowerManager.WakeLock? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -60,8 +63,21 @@ class RadioService : Service() {
       this, NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
     )
     if (lock == null) {
-      val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-      lock = wifi.createMulticastLock("takkie-service").apply {
+      val manager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+      lock = manager.createMulticastLock("takkie-service").apply {
+        setReferenceCounted(false)
+        acquire()
+      }
+      // With the screen off, Wi-Fi goes into a power-saving mode that drops
+      // the multicast packets discovery needs, whatever the lock above says,
+      // and the CPU may sleep between packets. A radio has to keep listening.
+      @Suppress("DEPRECATION")
+      wifi = manager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "takkie-service").apply {
+        setReferenceCounted(false)
+        acquire()
+      }
+      val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+      awake = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "takkie:radio").apply {
         setReferenceCounted(false)
         acquire()
       }
@@ -74,6 +90,10 @@ class RadioService : Service() {
   override fun onDestroy() {
     lock?.takeIf { it.isHeld }?.release()
     lock = null
+    wifi?.takeIf { it.isHeld }?.release()
+    wifi = null
+    awake?.takeIf { it.isHeld }?.release()
+    awake = null
     super.onDestroy()
   }
 }
