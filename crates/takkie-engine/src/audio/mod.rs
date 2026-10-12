@@ -8,6 +8,8 @@ pub mod devices;
 pub mod fake;
 /// The hardware boundary.
 pub mod io;
+/// The send path on a recording, for listening tests.
+pub mod lab;
 /// The receiving mixer.
 pub mod mix;
 /// Rate conversion to and from 48 kHz.
