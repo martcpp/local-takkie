@@ -192,7 +192,7 @@ impl AudioSource for CpalSource {
 
 /// A speaker through cpal.
 pub struct CpalSink {
-    _stream: Stream,
+    stream: Stream,
     ring: Producer<f32>,
     settings: StreamSettings,
     counters: Arc<Counters>,
@@ -225,7 +225,7 @@ impl CpalSink {
         )?;
         stream.play()?;
         Ok(Self {
-            _stream: stream,
+            stream,
             ring: producer,
             settings,
             counters,
@@ -260,6 +260,22 @@ impl AudioSink for CpalSink {
 
     fn write(&mut self, samples: &[f32]) -> usize {
         self.ring.push_partial_slice(samples).0.len()
+    }
+
+    fn set_playing(&mut self, playing: bool) {
+        let changed = if playing {
+            self.stream.play().map_err(|error| error.to_string())
+        } else {
+            self.stream.pause().map_err(|error| error.to_string())
+        };
+        if let Err(error) = changed {
+            tracing::warn!(playing, "speaker stream didn't change state: {error}");
+            self.give_up();
+        }
+    }
+
+    fn give_up(&mut self) {
+        self.counters.lost.store(true, Relaxed);
     }
 }
 
