@@ -25,6 +25,11 @@ export function spaceTalks(code: string, target: KeyTarget | null): boolean {
   return !typing && !inDialog
 }
 
+/** How long the phone buzzes when talking starts and stops, in ms. */
+export function buzz(talking: boolean): number {
+  return talking ? 30 : 15
+}
+
 /** Why talking isn't possible right now, or `null` when it is. */
 export function blocked(inputDevice: string | null): string | null {
   return inputDevice === null ? 'The microphone isn’t running' : null

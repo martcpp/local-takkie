@@ -127,6 +127,11 @@ pub async fn open_app_settings(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn set_keep_screen_on(app: AppHandle, on: bool) -> Result<(), String> {
+    mobile::keep_screen_on(&app, on)
+}
+
+#[tauri::command]
 pub fn snapshot(radio: State<'_, Radio>) -> Result<SnapshotView, String> {
     radio.view()
 }

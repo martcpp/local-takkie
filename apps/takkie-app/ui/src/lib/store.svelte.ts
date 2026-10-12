@@ -59,6 +59,9 @@ export async function connect(): Promise<() => void> {
       state = withProblem(state, why)
     }),
   ])
+  if (keepsScreenOn) {
+    await ask(engine.setKeepScreenOn(true))
+  }
   await begin(engine.permissions())
   return () => stops.forEach((stop) => stop())
 }
@@ -88,6 +91,26 @@ export async function recheck() {
 }
 
 export const openAppSettings = () => ask(engine.openAppSettings())
+
+const KEEP_SCREEN_ON = 'keep-screen-on'
+
+/** Phone-only options are shown when this is true. */
+export const onPhone = /Android/i.test(navigator.userAgent)
+
+let keepsScreenOn = $state(localStorage.getItem(KEEP_SCREEN_ON) === 'yes')
+
+export const screen = {
+  get keptOn() {
+    return keepsScreenOn
+  },
+}
+
+/** Keeps the screen from sleeping while the app is in front, and remembers it. */
+export async function setKeepScreenOn(on: boolean) {
+  keepsScreenOn = on
+  localStorage.setItem(KEEP_SCREEN_ON, on ? 'yes' : 'no')
+  await ask(engine.setKeepScreenOn(on))
+}
 
 /** Starts the radio again after it was turned off or failed to start. */
 export const turnOn = () => begin(engine.permissions())

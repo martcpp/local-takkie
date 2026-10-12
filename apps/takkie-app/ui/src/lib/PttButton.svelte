@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snapshot } from './engine'
-  import { blocked, spaceTalks } from './ptt'
+  import { blocked, buzz, spaceTalks } from './ptt'
   import { setTransmitting } from './store.svelte'
 
   let { snapshot }: { snapshot: Snapshot } = $props()
@@ -17,6 +17,8 @@
     if (on !== held) {
       held = on
       void setTransmitting(on)
+      // Does nothing where there is no vibration motor.
+      navigator.vibrate?.(buzz(on))
     }
   }
 

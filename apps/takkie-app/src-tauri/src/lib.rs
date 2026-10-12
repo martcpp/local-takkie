@@ -166,6 +166,7 @@ pub fn run() -> tauri::Result<()> {
         .plugin(mobile::permissions())
         .plugin(mobile::multicast())
         .plugin(mobile::service())
+        .plugin(mobile::screen())
         .manage(Radio::new())
         .invoke_handler(tauri::generate_handler![
             start_radio,
@@ -173,6 +174,7 @@ pub fn run() -> tauri::Result<()> {
             commands::permissions,
             commands::request_permissions,
             commands::open_app_settings,
+            commands::set_keep_screen_on,
             commands::snapshot,
             commands::set_transmitting,
             commands::set_channel,
