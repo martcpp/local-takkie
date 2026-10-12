@@ -179,12 +179,11 @@ impl TxThread {
                         Ok(Some(samples)) => {
                             heard = Instant::now();
                             let mark = gate.pass(transmitting.load(Relaxed));
-                            if mark.is_some() {
-                                chain.process(samples, &voice);
+                            level.set(if mark.is_some() {
+                                chain.process(samples, &voice)
                             } else {
-                                chain.idle(samples, &voice);
-                            }
-                            level.set(Level::of(samples));
+                                chain.idle(samples, &voice)
+                            });
                             let Some(mark) = mark else {
                                 continue;
                             };

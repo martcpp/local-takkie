@@ -4,7 +4,8 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
 use nnnoiseless::DenoiseState;
-use takkie_core::dsp::Biquad;
+use takkie_core::dsp::{Biquad, Level};
+use takkie_core::voice::Leveller;
 
 use super::config::PREFERRED_RATE;
 
@@ -50,6 +51,7 @@ impl NoiseSuppression {
 pub struct VoiceControls {
     low_cut: AtomicBool,
     noise: AtomicU8,
+    auto_level: AtomicBool,
 }
 
 impl Default for VoiceControls {
@@ -57,6 +59,7 @@ impl Default for VoiceControls {
         Self {
             low_cut: AtomicBool::new(true),
             noise: AtomicU8::new(NoiseSuppression::default() as u8),
+            auto_level: AtomicBool::new(true),
         }
     }
 }
@@ -68,6 +71,7 @@ impl VoiceControls {
         Self {
             low_cut: AtomicBool::new(false),
             noise: AtomicU8::new(NoiseSuppression::Off as u8),
+            auto_level: AtomicBool::new(false),
         }
     }
 
@@ -91,6 +95,17 @@ impl VoiceControls {
     #[must_use]
     pub fn noise_suppression(&self) -> NoiseSuppression {
         NoiseSuppression::from_u8(self.noise.load(Relaxed))
+    }
+
+    /// Turns the automatic level on or off.
+    pub fn set_auto_level(&self, on: bool) {
+        self.auto_level.store(on, Relaxed);
+    }
+
+    /// Whether quiet and loud talkers are brought to the same level.
+    #[must_use]
+    pub fn auto_level(&self) -> bool {
+        self.auto_level.load(Relaxed)
     }
 }
 
@@ -165,6 +180,7 @@ impl fmt::Debug for Denoiser {
 pub struct VoiceChain {
     low_cut: Biquad,
     denoiser: Denoiser,
+    leveller: Leveller,
 }
 
 impl Default for VoiceChain {
@@ -172,23 +188,32 @@ impl Default for VoiceChain {
         Self {
             low_cut: Biquad::high_pass(LOW_CUT_HZ, PREFERRED_RATE),
             denoiser: Denoiser::new(),
+            leveller: Leveller::new(PREFERRED_RATE),
         }
     }
 }
 
 impl VoiceChain {
     /// Processes one frame that will be sent, in place, with the stages
-    /// `controls` has on.
-    pub fn process(&mut self, frame: &mut [f32], controls: &VoiceControls) {
+    /// `controls` has on. Returns how loud the microphone was, before the
+    /// automatic level evened it out.
+    pub fn process(&mut self, frame: &mut [f32], controls: &VoiceControls) -> Level {
         self.cut_lows(frame, controls);
         self.denoiser.process(frame, controls.noise_suppression());
+        let heard = Level::of(frame);
+        if controls.auto_level() {
+            self.leveller.process(frame);
+        }
+        heard
     }
 
-    /// Processes one frame that only feeds the level meter. The costly
-    /// stages rest, so an idle radio doesn't spend the battery on them.
-    pub fn idle(&mut self, frame: &mut [f32], controls: &VoiceControls) {
+    /// Processes one frame that only feeds the level meter, and returns how
+    /// loud it was. The costly stages rest, so an idle radio doesn't spend
+    /// the battery on them.
+    pub fn idle(&mut self, frame: &mut [f32], controls: &VoiceControls) -> Level {
         self.cut_lows(frame, controls);
         self.denoiser.process(frame, NoiseSuppression::Off);
+        Level::of(frame)
     }
 
     fn cut_lows(&mut self, frame: &mut [f32], controls: &VoiceControls) {
@@ -203,8 +228,6 @@ impl VoiceChain {
 #[cfg(test)]
 mod tests {
     use std::f32::consts::TAU;
-
-    use takkie_core::dsp::Level;
 
     use super::*;
     use crate::audio::resample::FRAME;
@@ -243,7 +266,7 @@ mod tests {
     }
 
     fn only(low_cut: bool, noise: NoiseSuppression) -> VoiceControls {
-        let controls = VoiceControls::default();
+        let controls = VoiceControls::raw();
         controls.set_low_cut(low_cut);
         controls.set_noise_suppression(noise);
         controls
@@ -268,6 +291,31 @@ mod tests {
         let controls = VoiceControls::default();
         assert!(controls.low_cut());
         assert_eq!(controls.noise_suppression(), NoiseSuppression::Normal);
+        assert!(controls.auto_level());
+    }
+
+    #[test]
+    fn the_automatic_level_brings_a_quiet_voice_up_but_the_meter_shows_the_microphone() {
+        let controls = VoiceControls::raw();
+        controls.set_auto_level(true);
+        let mut chain = VoiceChain::default();
+        let word: Vec<f32> = hum_and_voice()[..FRAME * 25]
+            .iter()
+            .map(|sample| sample * 0.05)
+            .collect();
+        let (mut sent, mut heard) = (0.0, 0.0);
+        for _ in 0..12 {
+            for frame in word.clone().chunks_mut(FRAME) {
+                heard = chain.process(frame, &controls).rms;
+                sent = Level::of(frame).rms;
+            }
+            for _ in 0..25 {
+                chain.process(&mut [0.0; FRAME], &controls);
+            }
+        }
+        assert!(sent > heard * 5.0, "sent {sent}, microphone {heard}");
+        let last = &word[word.len() - FRAME..];
+        assert!((heard / Level::of(last).rms - 1.0).abs() < 0.01);
     }
 
     #[test]

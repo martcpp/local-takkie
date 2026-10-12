@@ -4,7 +4,8 @@
 //! `cargo run -p takkie-engine --example lab -- send clip.wav heard.wav [--loss PERCENT] [--raw]`
 //!
 //! `--raw` leaves the voice processing out, to compare with and without.
-//! `--noise off|normal|strong` sets the noise suppression.
+//! `--noise off|normal|strong` sets the noise suppression, `--level on|off`
+//! the automatic level.
 
 use std::error::Error;
 use std::io::{self, Write};
@@ -24,7 +25,7 @@ use takkie_engine::audio::voice::{NoiseSuppression, VoiceControls};
 
 const USAGE: &str = "usage:
   lab record <out.wav> [--seconds N] [--input NAME]
-  lab send <in.wav> <out.wav> [--loss PERCENT] [--raw] [--noise off|normal|strong]";
+  lab send <in.wav> <out.wav> [--loss PERCENT] [--raw] [--noise off|normal|strong] [--level on|off]";
 
 type Outcome<T> = Result<T, Box<dyn Error>>;
 
@@ -60,6 +61,11 @@ fn run() -> Outcome<()> {
                 Some("normal") => NoiseSuppression::Normal,
                 Some("strong") => NoiseSuppression::Strong,
                 _ => return Err("--noise is off, normal or strong".into()),
+            }),
+            "--level" => voice.set_auto_level(match rest.next().map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => return Err("--level is on or off".into()),
             }),
             other => paths.push(other),
         }
