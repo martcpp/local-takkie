@@ -58,6 +58,56 @@ pub fn soft_limit(samples: &mut [f32]) {
     }
 }
 
+/// A second-order filter that keeps its state between frames.
+#[derive(Clone, Debug)]
+pub struct Biquad {
+    b: [f64; 3],
+    a: [f64; 2],
+    z: [f64; 2],
+}
+
+impl Biquad {
+    /// Removes what lies below `cutoff` Hz, 12 dB per octave, and leaves
+    /// the rest flat.
+    #[must_use]
+    pub fn high_pass(cutoff: f32, sample_rate: u32) -> Self {
+        let omega = std::f64::consts::TAU * f64::from(cutoff) / f64::from(sample_rate);
+        let (sin, cos) = omega.sin_cos();
+        let alpha = sin / std::f64::consts::SQRT_2;
+        let a0 = 1.0 + alpha;
+        Self {
+            b: [
+                (1.0 + cos) / 2.0 / a0,
+                -(1.0 + cos) / a0,
+                (1.0 + cos) / 2.0 / a0,
+            ],
+            a: [-2.0 * cos / a0, (1.0 - alpha) / a0],
+            z: [0.0; 2],
+        }
+    }
+
+    /// Filters `samples` in place.
+    pub fn process(&mut self, samples: &mut [f32]) {
+        let [b0, b1, b2] = self.b;
+        let [a1, a2] = self.a;
+        let [mut z1, mut z2] = self.z;
+        for sample in samples {
+            let x = f64::from(*sample);
+            let y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2;
+            z2 = b2 * x - a2 * y;
+            *sample = y as f32;
+        }
+        // A tail that decays for ever turns into denormals, which are slow.
+        self.z = [z1, z2].map(|z| if z.abs() < 1e-20 { 0.0 } else { z });
+    }
+
+    /// Forgets what came before.
+    pub fn reset(&mut self) {
+        self.z = [0.0; 2];
+    }
+}
+
 const FADE_MS: usize = 5;
 
 /// A short sine tone with faded edges, made a buffer at a time.
@@ -340,5 +390,65 @@ mod tests {
                 peak: 0.0
             }
         );
+    }
+
+    fn sine(frequency: f32, amplitude: f32) -> Vec<f32> {
+        (0..48_000)
+            .map(|i| amplitude * (std::f32::consts::TAU * frequency * i as f32 / 48_000.0).sin())
+            .collect()
+    }
+
+    fn settled(filter: &mut Biquad, mut samples: Vec<f32>) -> f32 {
+        for frame in samples.chunks_mut(960) {
+            filter.process(frame);
+        }
+        Level::of(&samples[24_000..]).rms
+    }
+
+    #[test]
+    fn a_high_pass_cuts_rumble_and_leaves_the_voice() {
+        let rms = 0.5 / 2.0_f32.sqrt();
+        let mut filter = Biquad::high_pass(100.0, 48_000);
+        assert!(settled(&mut filter, sine(25.0, 0.5)) < rms * 0.08);
+        filter.reset();
+        assert!(settled(&mut filter, sine(50.0, 0.5)) < rms * 0.3);
+        filter.reset();
+        let at_cutoff = settled(&mut filter, sine(100.0, 0.5));
+        assert!((at_cutoff / rms - 0.707).abs() < 0.02, "{at_cutoff}");
+        for voice in [300.0, 1_000.0, 4_000.0, 12_000.0] {
+            filter.reset();
+            let out = settled(&mut filter, sine(voice, 0.5));
+            assert!((out / rms - 1.0).abs() < 0.02, "{voice} Hz: {out}");
+        }
+    }
+
+    #[test]
+    fn a_high_pass_removes_a_constant_offset() {
+        let mut filter = Biquad::high_pass(100.0, 48_000);
+        assert!(settled(&mut filter, vec![0.3; 48_000]) < 1e-6);
+    }
+
+    #[test]
+    fn a_filter_is_the_same_in_one_piece_or_in_frames() {
+        let input = sine(180.0, 0.4);
+        let mut whole = input.clone();
+        Biquad::high_pass(100.0, 48_000).process(&mut whole);
+        let mut framed = input;
+        let mut filter = Biquad::high_pass(100.0, 48_000);
+        for frame in framed.chunks_mut(960) {
+            filter.process(frame);
+        }
+        assert_eq!(whole, framed);
+    }
+
+    #[test]
+    fn a_filter_stays_finite_and_goes_quiet_after_the_sound_stops() {
+        let mut filter = Biquad::high_pass(100.0, 48_000);
+        let mut burst = sine(200.0, 1.0);
+        filter.process(&mut burst);
+        let mut silence = vec![0.0; 480_000];
+        filter.process(&mut silence);
+        assert!(silence.iter().all(|sample| sample.is_finite()));
+        assert_eq!(silence[479_000..], [0.0; 1_000]);
     }
 }

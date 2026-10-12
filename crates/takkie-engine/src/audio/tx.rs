@@ -12,6 +12,7 @@ use takkie_core::dsp::Level;
 use super::codec::{CodecError, VoiceEncoder};
 use super::io::AudioSource;
 use super::resample::{FRAME, ResampleError, Resampler};
+use super::voice::{VoiceChain, VoiceControls};
 use crate::threads::{STOP_WITHIN, join_within};
 
 /// A running microphone that gives nothing for this long has died quietly.
@@ -75,7 +76,10 @@ impl Framer {
     ///
     /// # Errors
     /// [`ResampleError`] if resampling fails.
-    pub fn next(&mut self, source: &mut dyn AudioSource) -> Result<Option<&[f32]>, ResampleError> {
+    pub fn next(
+        &mut self,
+        source: &mut dyn AudioSource,
+    ) -> Result<Option<&mut [f32]>, ResampleError> {
         let needed = self.resampler.input_needed();
         if self.filled < needed {
             let room = &mut self.pending[self.filled..needed];
@@ -88,7 +92,7 @@ impl Framer {
             .resampler
             .process(&self.pending[..needed], &mut self.frame)?;
         self.filled = 0;
-        Ok(Some(&self.frame[..written]))
+        Ok(Some(&mut self.frame[..written]))
     }
 }
 
@@ -145,8 +149,9 @@ pub struct TxThread {
 }
 
 impl TxThread {
-    /// Starts reading `source`, updating `level` every frame and sending
-    /// packets while `transmitting` is set.
+    /// Starts reading `source`, running each frame through the voice
+    /// processing `voice` has on, updating `level` and sending packets
+    /// while `transmitting` is set.
     ///
     /// # Errors
     /// [`TxError`] for an unusable mic rate, an encoder that won't start, or
@@ -155,6 +160,7 @@ impl TxThread {
         mut source: Box<dyn AudioSource>,
         transmitting: Arc<AtomicBool>,
         level: Arc<LevelMeter>,
+        voice: Arc<VoiceControls>,
         events: Sender<TxEvent>,
     ) -> Result<Self, TxError> {
         let mut framer = Framer::new(source.sample_rate())?;
@@ -165,12 +171,14 @@ impl TxThread {
             .name("takkie-tx".into())
             .spawn(move || {
                 let mut gate = Gate::default();
+                let mut chain = VoiceChain::default();
                 let mut heard = Instant::now();
                 let mut given_up = false;
                 while !stopping.load(Relaxed) {
                     match framer.next(source.as_mut()) {
                         Ok(Some(samples)) => {
                             heard = Instant::now();
+                            chain.process(samples, &voice);
                             level.set(Level::of(samples));
                             let Some(mark) = gate.pass(transmitting.load(Relaxed)) else {
                                 continue;
@@ -262,7 +270,7 @@ mod tests {
         assert!(framer.next(&mut source).unwrap().is_none());
         source.advance(460);
         assert_eq!(
-            framer.next(&mut source).unwrap().map(<[f32]>::len),
+            framer.next(&mut source).unwrap().map(|frame| frame.len()),
             Some(FRAME)
         );
         assert!(framer.next(&mut source).unwrap().is_none());
@@ -320,8 +328,14 @@ mod tests {
         let transmitting = Arc::new(AtomicBool::new(true));
         let (sender, events) = unbounded();
         let level = Arc::new(LevelMeter::default());
-        let thread =
-            TxThread::spawn(Box::new(source), Arc::clone(&transmitting), level, sender).unwrap();
+        let thread = TxThread::spawn(
+            Box::new(source),
+            Arc::clone(&transmitting),
+            level,
+            Arc::default(),
+            sender,
+        )
+        .unwrap();
         let packets: Vec<TxPacket> = (0..10)
             .map(
                 |_| match events.recv_timeout(Duration::from_secs(5)).unwrap() {
@@ -363,6 +377,7 @@ mod tests {
             Box::new(source),
             Arc::new(AtomicBool::new(false)),
             Arc::clone(&level),
+            Arc::default(),
             sender,
         )
         .unwrap();
