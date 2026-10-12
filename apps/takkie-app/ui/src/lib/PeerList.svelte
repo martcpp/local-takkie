@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snapshot } from './engine'
-  import { ordered } from './state'
+  import { NO_NETWORK, ordered } from './state'
   import { setPeerMuted } from './store.svelte'
 
   let { snapshot }: { snapshot: Snapshot } = $props()
@@ -13,8 +13,13 @@
   <h2 id="peers-title">
     People <span class="count">{here} on your channel, {peers.length} in all</span>
   </h2>
+  {#if !snapshot.network}
+    <p class="empty offline">{NO_NETWORK}</p>
+  {/if}
   {#if peers.length === 0}
-    <p class="empty">Nobody else yet. Others on this network appear here by themselves.</p>
+    {#if snapshot.network}
+      <p class="empty">Nobody else yet. Others on this network appear here by themselves.</p>
+    {/if}
   {:else}
     <ul>
       {#each peers as peer (peer.id)}
@@ -50,6 +55,10 @@
   .empty {
     margin: 0;
     color: var(--muted);
+  }
+
+  .offline {
+    color: var(--warning);
   }
 
   ul {

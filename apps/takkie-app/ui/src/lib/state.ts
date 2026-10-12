@@ -20,9 +20,18 @@ export const MAX_LOG = 100
 
 export const initial = (): AppState => ({ snapshot: null, problem: null, access: null, log: [] })
 
-export function withSnapshot(state: AppState, snapshot: Snapshot): AppState {
-  return { ...state, snapshot, problem: null }
+/** Takes the newest snapshot, and logs it when the network comes or goes. */
+export function withSnapshot(state: AppState, snapshot: Snapshot, at = 0): AppState {
+  const next = { ...state, snapshot, problem: null }
+  const was = state.snapshot?.network ?? true
+  if (was === snapshot.network) {
+    return next
+  }
+  return withNote(next, snapshot.network ? 'Back on the network' : NO_NETWORK, at)
 }
+
+/** What to show while there is no network for other takkies to be on. */
+export const NO_NETWORK = 'No Wi-Fi or local network. Others can’t be found until it is back.'
 
 export function withProblem(state: AppState, problem: string): AppState {
   return { ...state, snapshot: null, problem }

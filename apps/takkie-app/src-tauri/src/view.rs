@@ -60,9 +60,17 @@ impl PeerView {
 pub struct Running {
     input: Option<String>,
     output: Option<String>,
+    // The opposite of what is shown, so that nothing known yet reads as
+    // "on a network".
+    offline: bool,
 }
 
 impl Running {
+    /// Records whether this device is on a network other takkies can be on.
+    pub fn note_network(&mut self, on_network: bool) {
+        self.offline = !on_network;
+    }
+
     /// Follows a device starting or going away; other events change nothing.
     pub fn note(&mut self, event: &EngineEvent) {
         let (direction, now) = match event {
@@ -96,6 +104,7 @@ pub struct SnapshotView {
     buffer_ms: u32,
     input_device: Option<String>,
     output_device: Option<String>,
+    network: bool,
     peers: Vec<PeerView>,
 }
 
@@ -115,6 +124,7 @@ impl SnapshotView {
             buffer_ms: snapshot.buffer_ms,
             input_device: running.input.clone(),
             output_device: running.output.clone(),
+            network: !running.offline,
             peers: snapshot
                 .peers
                 .iter()
@@ -281,6 +291,10 @@ mod tests {
         let json = serde_json::to_value(&view).unwrap();
         assert_eq!(json["inputDevice"], "Headset (48000 Hz)");
         assert!(json["outputDevice"].is_null());
+        assert_eq!(json["network"], true);
+        running.note_network(false);
+        let offline = SnapshotView::at(&snapshot(Vec::new()), &running, now);
+        assert_eq!(serde_json::to_value(&offline).unwrap()["network"], false);
         assert_eq!(json["id"], "00000000000000ab");
         assert_eq!(json["channel"], 4);
         assert_eq!(json["private"], true);

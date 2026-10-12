@@ -76,6 +76,18 @@ impl Radio {
         }
     }
 
+    /// Whether the engine is running.
+    pub fn is_running(&self) -> bool {
+        self.engine.lock().is_ok_and(|engine| engine.is_ok())
+    }
+
+    /// Records whether this device is on a network other takkies can be on.
+    pub fn note_network(&self, on_network: bool) {
+        if let Ok(mut running) = self.running.lock() {
+            running.note_network(on_network);
+        }
+    }
+
     /// What the main screen draws right now.
     pub fn view(&self) -> Result<SnapshotView, String> {
         let running = self
@@ -213,6 +225,7 @@ mod tests {
             Err("The engine isn't running: the port is taken".to_owned())
         );
         assert_eq!(radio.view().err(), asked.err());
+        assert!(!radio.is_running());
         radio.stop("the app is closing");
         let asked = radio.with(|engine| engine.set_muted(true));
         assert_eq!(

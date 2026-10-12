@@ -3,6 +3,7 @@ import { describe as suite, expect, test } from 'vitest'
 import type { Access, Peer, Snapshot } from './engine'
 import {
   MAX_LOG,
+  NO_NETWORK,
   channelState,
   describe,
   initial,
@@ -42,6 +43,7 @@ const snapshot = (peers: Peer[] = []): Snapshot => ({
   bufferMs: 0,
   inputDevice: 'Microphone',
   outputDevice: 'Speakers',
+  network: true,
   peers,
 })
 
@@ -65,6 +67,28 @@ suite('snapshots and problems', () => {
     const broken = withProblem(state, 'stopped')
     expect(broken.snapshot).toBeNull()
     expect(broken.log).toEqual([{ at: 5, text: 'careful' }])
+  })
+})
+
+suite('the network coming and going', () => {
+  const offline = { ...snapshot(), network: false }
+
+  test('losing it is logged once, not on every snapshot', () => {
+    let state = withSnapshot(running(), offline, 5)
+    expect(state.log).toEqual([{ at: 5, text: NO_NETWORK }])
+    state = withSnapshot(state, offline, 6)
+    expect(state.log).toHaveLength(1)
+  })
+
+  test('getting it back is logged too', () => {
+    const state = withSnapshot(withSnapshot(running(), offline, 5), snapshot(), 9)
+    expect(state.log.map((line) => line.text)).toEqual([NO_NETWORK, 'Back on the network'])
+    expect(state.log[1].at).toBe(9)
+  })
+
+  test('starting without a network says so, starting with one says nothing', () => {
+    expect(withSnapshot(initial(), offline, 1).log).toHaveLength(1)
+    expect(withSnapshot(initial(), snapshot(), 1).log).toEqual([])
   })
 })
 

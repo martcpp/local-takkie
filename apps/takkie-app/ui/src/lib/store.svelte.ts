@@ -50,7 +50,7 @@ async function ask(action: Promise<void>) {
 export async function connect(): Promise<() => void> {
   const stops = await Promise.all([
     engine.onSnapshot((snapshot) => {
-      state = withSnapshot(state, snapshot)
+      state = withSnapshot(state, snapshot, Date.now())
     }),
     engine.onEvent((event) => {
       state = withEvent(state, event, Date.now())
@@ -73,7 +73,7 @@ async function begin(asked: Promise<engine.Access>) {
     state = withAccess(state, await asked)
     if (state.access && micGate(state.access) === 'ready') {
       await engine.startRadio()
-      state = withSnapshot(state, await engine.snapshot())
+      state = withSnapshot(state, await engine.snapshot(), Date.now())
     }
   } catch (problem) {
     state = withProblem(state, String(problem))
@@ -97,7 +97,7 @@ export async function shown(visible: boolean) {
     await begin(engine.permissions())
   } else if (state.snapshot) {
     try {
-      state = withSnapshot(state, await engine.snapshot())
+      state = withSnapshot(state, await engine.snapshot(), Date.now())
     } catch (problem) {
       state = withProblem(state, String(problem))
     }
