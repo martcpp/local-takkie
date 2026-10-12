@@ -135,12 +135,19 @@ fn watch_surroundings(app: AppHandle) {
         .name("takkie-app-surroundings".into())
         .spawn(move || {
             let mut logged = None;
+            let mut routed = None;
             while app.state::<Radio>().is_running() {
                 let on_network = mobile::on_local_network(&app);
                 let route = mobile::current_route(&app);
                 let radio = app.state::<Radio>();
                 radio.note_network(on_network);
                 radio.note_route(route);
+                // Android leaves open streams on the device they started on.
+                if routed.is_some() && route != routed {
+                    tracing::info!(?route, "sound moved; reopening audio");
+                    radio.reopen_audio();
+                }
+                routed = route;
                 // Audio trouble is only heard, never reported, so leave a trace.
                 let stats = radio.stats();
                 if stats != logged
@@ -152,6 +159,7 @@ fn watch_surroundings(app: AppHandle) {
                         silenced = now.frames_silenced,
                         recovered = now.frames_recovered,
                         mic_dropped = now.mic_dropped,
+                        block_ms = now.speaker_block_ms,
                         received = now.packets_received,
                         sent = now.packets_sent,
                         "audio totals"

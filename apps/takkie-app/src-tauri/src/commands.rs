@@ -76,6 +76,11 @@ impl Radio {
         }
     }
 
+    /// Reopens the microphone and speaker where the system now sends sound.
+    pub fn reopen_audio(&self) {
+        let _ = self.with(Engine::reopen_audio);
+    }
+
     /// The engine's running totals, for the log.
     pub fn stats(&self) -> Option<EngineStats> {
         self.with(|engine| engine.snapshot().stats).ok()
