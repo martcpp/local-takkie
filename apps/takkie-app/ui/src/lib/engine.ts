@@ -66,6 +66,8 @@ export const requestPermissions = () => invoke<Access>('request_permissions')
 export const openAppSettings = () => invoke<void>('open_app_settings')
 /** Only does something on a phone. */
 export const setKeepScreenOn = (on: boolean) => invoke<void>('set_keep_screen_on', { on })
+/** Only does something on a phone. */
+export const setHeadsetButton = (on: boolean) => invoke<void>('set_headset_button', { on })
 /** Does nothing if the engine already runs. */
 export const startRadio = () => invoke<void>('start_radio')
 export const stopRadio = () => invoke<void>('stop_radio')

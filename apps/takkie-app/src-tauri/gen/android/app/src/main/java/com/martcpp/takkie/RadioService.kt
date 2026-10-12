@@ -8,8 +8,12 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.IBinder
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -29,6 +33,7 @@ private const val ACTION_STOP = "com.martcpp.takkie.STOP"
 // suspends the multicast lock, all without an error.
 class RadioService : Service() {
   private var lock: WifiManager.MulticastLock? = null
+  private var session: MediaSession? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -66,6 +71,9 @@ class RadioService : Service() {
         acquire()
       }
     }
+    if (session == null) {
+      session = headsetSession()
+    }
     // If Android kills the app, the engine is gone too; a restarted service
     // would only show a notification for a radio that isn't running.
     return START_NOT_STICKY
@@ -79,7 +87,35 @@ class RadioService : Service() {
     super.onTaskRemoved(rootIntent)
   }
 
+  // With the app in the background or the screen off, headset buttons only
+  // reach an app through an active media session.
+  private fun headsetSession(): MediaSession {
+    val buttons = PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE
+    return MediaSession(this, "takkie").apply {
+      setCallback(object : MediaSession.Callback() {
+        override fun onMediaButtonEvent(intent: Intent): Boolean {
+          val event = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+          } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+          }
+          return event != null && HeadsetPlugin.onKey(event)
+        }
+      })
+      setPlaybackState(
+        PlaybackState.Builder()
+          .setState(PlaybackState.STATE_PLAYING, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
+          .setActions(buttons)
+          .build()
+      )
+      isActive = true
+    }
+  }
+
   override fun onDestroy() {
+    session?.release()
+    session = null
     lock?.takeIf { it.isHeld }?.release()
     lock = null
     super.onDestroy()

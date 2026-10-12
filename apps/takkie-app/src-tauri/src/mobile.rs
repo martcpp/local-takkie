@@ -366,6 +366,77 @@ pub fn current_route<R: Runtime>(app: &AppHandle<R>) -> Option<Route> {
     }
 }
 
+#[cfg(target_os = "android")]
+struct Headset<R: Runtime>(tauri::plugin::PluginHandle<R>);
+
+/// Loads the Kotlin side of the headset button.
+pub fn headset<R: Runtime>() -> TauriPlugin<R> {
+    Builder::new("headset")
+        .setup(|app, api| {
+            #[cfg(target_os = "android")]
+            {
+                use tauri::Manager;
+                let handle = api.register_android_plugin("com.martcpp.takkie", "HeadsetPlugin")?;
+                app.manage(Headset(handle));
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (app, api);
+            Ok(())
+        })
+        .build()
+}
+
+/// Blocks until the headset button is pressed (`true`) or released
+/// (`false`), which may be hours. Only for a thread of its own. A computer
+/// has no such button for us, and gets an error at once.
+pub fn wait_for_button<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        #[derive(Deserialize)]
+        struct Button {
+            pressed: bool,
+        }
+        app.try_state::<Headset<R>>()
+            .ok_or_else(|| "the headset plugin isn't loaded".to_owned())?
+            .0
+            .run_mobile_plugin::<Button>("waitForButton", ())
+            .map(|button| button.pressed)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err("only phones pass headset buttons to apps".to_owned())
+    }
+}
+
+/// Lets the headset button talk, or gives it back to whatever plays music.
+/// A computer has no such button for us, so there this does nothing.
+pub fn set_headset_button<R: Runtime>(app: &AppHandle<R>, on: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+
+        #[derive(Serialize)]
+        struct Wanted {
+            on: bool,
+        }
+        app.try_state::<Headset<R>>()
+            .ok_or_else(|| "the headset plugin isn't loaded".to_owned())?
+            .0
+            .run_mobile_plugin::<serde::de::IgnoredAny>("setEnabled", Wanted { on })
+            .map(drop)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, on);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
