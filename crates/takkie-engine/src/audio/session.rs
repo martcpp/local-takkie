@@ -227,6 +227,16 @@ impl<O: DeviceOpener> AudioSession<O> {
         events
     }
 
+    /// Closes both devices, so the next [`poll`](Self::poll) opens the
+    /// current defaults. For when the system moved sound somewhere else,
+    /// like a headset being plugged in.
+    pub fn reopen(&mut self) {
+        self.input.thread = None;
+        self.input.last_try = None;
+        self.output.thread = None;
+        self.output.last_try = None;
+    }
+
     /// The running mic's counters.
     #[must_use]
     pub fn input_counters(&self) -> Option<Arc<Counters>> {

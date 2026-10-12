@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
 use takkie_core::dsp::Level;
@@ -13,6 +13,9 @@ use super::codec::{CodecError, VoiceEncoder};
 use super::io::AudioSource;
 use super::resample::{FRAME, ResampleError, Resampler};
 use crate::threads::{STOP_WITHIN, join_within};
+
+/// A running microphone that gives nothing for this long has died quietly.
+const STALLED_AFTER: Duration = Duration::from_secs(3);
 
 /// Where a sent frame sits in the stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,9 +165,12 @@ impl TxThread {
             .name("takkie-tx".into())
             .spawn(move || {
                 let mut gate = Gate::default();
+                let mut heard = Instant::now();
+                let mut given_up = false;
                 while !stopping.load(Relaxed) {
                     match framer.next(source.as_mut()) {
                         Ok(Some(samples)) => {
+                            heard = Instant::now();
                             level.set(Level::of(samples));
                             let Some(mark) = gate.pass(transmitting.load(Relaxed)) else {
                                 continue;
@@ -181,7 +187,16 @@ impl TxThread {
                                 return;
                             }
                         }
-                        Ok(None) => thread::sleep(Duration::from_millis(5)),
+                        Ok(None) => {
+                            // A microphone gives samples all the time. One
+                            // that stops has died without saying so.
+                            if !given_up && heard.elapsed() >= STALLED_AFTER {
+                                tracing::warn!("the microphone stopped giving audio; reopening it");
+                                source.give_up();
+                                given_up = true;
+                            }
+                            thread::sleep(Duration::from_millis(5));
+                        }
                         Err(error) => {
                             tracing::error!("tx stopped: {error}");
                             return;

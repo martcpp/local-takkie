@@ -197,6 +197,8 @@ pub struct EngineStats {
     pub mic_dropped: u64,
     /// Times the speaker ran dry.
     pub speaker_underruns: u64,
+    /// The most audio the speaker has asked for in one go, in ms.
+    pub speaker_block_ms: u64,
 }
 
 /// Everything a UI draws, read without locks.
@@ -230,6 +232,7 @@ pub struct EngineSnapshot {
 
 enum Command {
     SetChannel(ChannelId, Option<Passphrase>),
+    ReopenAudio,
 }
 
 fn derive(
@@ -492,6 +495,15 @@ impl Engine {
         }
     }
 
+    /// Closes and reopens the microphone and speaker on the system's
+    /// current defaults. Call it when sound should move, for example after
+    /// a headset is plugged in on a phone.
+    pub fn reopen_audio(&self) {
+        if let Some(commands) = &self.commands {
+            let _ = commands.send(Command::ReopenAudio);
+        }
+    }
+
     /// Silences what we hear.
     pub fn set_muted(&self, muted: bool) {
         self.shared.mix.controls.set_muted(muted);
@@ -557,6 +569,7 @@ impl Engine {
                 frames_silenced: mix.silenced.load(Relaxed),
                 mic_dropped: total(&shared.mic, |c| c.dropped.load(Relaxed)),
                 speaker_underruns: total(&shared.speaker, |c| c.underruns.load(Relaxed)),
+                speaker_block_ms: u64::from(mix.block_ms.load(Relaxed)),
             },
         }
     }
@@ -606,6 +619,10 @@ impl<O: DeviceOpener> Control<O> {
                         {
                             tracing::warn!("couldn't announce channel {channel}: {error}");
                         }
+                    }
+                    Ok(Command::ReopenAudio) => {
+                        tracing::info!("reopening the microphone and speaker");
+                        self.session.reopen();
                     }
                     Err(_) => break,
                 },
