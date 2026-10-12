@@ -1,5 +1,6 @@
 //! What the frontend can ask the engine to do.
 
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -14,6 +15,9 @@ use crate::view::{DevicesView, Running, SnapshotView, peer_id};
 pub struct Radio {
     engine: Mutex<Result<Engine, String>>,
     running: Arc<Mutex<Running>>,
+    // Two things can ask to talk. The radio transmits while either does.
+    screen_talks: AtomicBool,
+    headset_talks: AtomicBool,
 }
 
 impl Radio {
@@ -22,7 +26,31 @@ impl Radio {
         Self {
             engine: Mutex::new(Err("it hasn't been started yet".to_owned())),
             running: Arc::default(),
+            screen_talks: AtomicBool::new(false),
+            headset_talks: AtomicBool::new(false),
         }
+    }
+
+    /// The on-screen button, or the keyboard, was pressed or let go.
+    pub fn talk_from_screen(&self, on: bool) -> Result<(), String> {
+        self.screen_talks.store(on, Relaxed);
+        self.talk()
+    }
+
+    /// The headset button now means talk, or no longer does.
+    pub fn talk_from_headset(&self, on: bool) -> Result<(), String> {
+        self.headset_talks.store(on, Relaxed);
+        self.talk()
+    }
+
+    /// Whether the headset button is what keeps us talking.
+    pub fn headset_talks(&self) -> bool {
+        self.headset_talks.load(Relaxed)
+    }
+
+    fn talk(&self) -> Result<(), String> {
+        let on = self.screen_talks.load(Relaxed) || self.headset_talks.load(Relaxed);
+        self.with(|engine| engine.set_transmitting(on))
     }
 
     /// Starts the engine and hands each of its events to `on_event`.
@@ -71,6 +99,8 @@ impl Radio {
     /// Stops the engine: threads joined, Bye sent, mDNS unregistered.
     /// `why` is what the window shows until it is started again.
     pub fn stop(&self, why: &str) {
+        self.screen_talks.store(false, Relaxed);
+        self.headset_talks.store(false, Relaxed);
         if let Ok(mut engine) = self.engine.lock() {
             *engine = Err(why.to_owned());
         }
@@ -156,6 +186,19 @@ pub async fn open_app_settings(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn set_headset_button(
+    app: AppHandle,
+    radio: State<'_, Radio>,
+    on: bool,
+) -> Result<(), String> {
+    if !on {
+        // Don't leave it talking with no button left to stop it.
+        let _ = radio.talk_from_headset(false);
+    }
+    mobile::set_headset_button(&app, on)
+}
+
+#[tauri::command]
 pub async fn set_keep_screen_on(app: AppHandle, on: bool) -> Result<(), String> {
     mobile::keep_screen_on(&app, on)
 }
@@ -167,7 +210,7 @@ pub fn snapshot(radio: State<'_, Radio>) -> Result<SnapshotView, String> {
 
 #[tauri::command]
 pub fn set_transmitting(radio: State<'_, Radio>, on: bool) -> Result<(), String> {
-    radio.with(|engine| engine.set_transmitting(on))
+    radio.talk_from_screen(on)
 }
 
 #[tauri::command]
@@ -243,7 +286,10 @@ mod tests {
         );
         assert_eq!(radio.view().err(), asked.err());
         assert!(!radio.is_running());
+        assert!(radio.talk_from_headset(true).is_err());
+        assert!(radio.headset_talks());
         radio.stop("the app is closing");
+        assert!(!radio.headset_talks(), "stopping lets go of the button");
         let asked = radio.with(|engine| engine.set_muted(true));
         assert_eq!(
             asked,

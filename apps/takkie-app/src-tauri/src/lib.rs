@@ -1,6 +1,7 @@
 //! The local-takkie desktop and Android app: a Tauri window around the engine.
 
 mod commands;
+mod headset;
 mod mobile;
 mod view;
 
@@ -122,6 +123,7 @@ fn start_radio(app: AppHandle) -> Result<(), String> {
             tracing::warn!("no foreground service, so the radio stops with the screen: {error}");
         }
         stop_on_request(app.clone());
+        follow_headset(app.clone());
         watch_surroundings(app.clone());
         publish_snapshots(app);
     }
@@ -203,6 +205,49 @@ fn stop_on_request(app: AppHandle) {
 #[cfg(not(target_os = "android"))]
 fn stop_on_request(_app: AppHandle) {}
 
+/// Set once the thread that follows the headset button is running.
+struct HeadsetFollowed(AtomicBool);
+
+// One thread for the life of the app: a second one would take every other
+// press away from the first. On a computer it ends at once.
+fn follow_headset(app: AppHandle) {
+    if app.state::<HeadsetFollowed>().0.swap(true, Relaxed) {
+        return;
+    }
+    let following = thread::Builder::new()
+        .name("takkie-app-headset".into())
+        .spawn(move || {
+            let mut talk = headset::HeadsetTalk::default();
+            loop {
+                let pressed = match mobile::wait_for_button(&app) {
+                    Ok(pressed) => pressed,
+                    Err(error) => {
+                        tracing::debug!("not following a headset button: {error}");
+                        return;
+                    }
+                };
+                let radio = app.state::<Radio>();
+                // The radio was stopped, or the switch turned off, meanwhile.
+                if talk.is_talking() && !radio.headset_talks() {
+                    talk.reset();
+                }
+                let now = Instant::now();
+                let talking = if pressed {
+                    talk.press(now)
+                } else {
+                    talk.release(now)
+                };
+                tracing::info!(pressed, talking, "headset button");
+                if radio.talk_from_headset(talking).is_err() {
+                    talk.reset();
+                }
+            }
+        });
+    if let Err(error) = following {
+        tracing::warn!("the headset button won't work: {error}");
+    }
+}
+
 #[tauri::command(async)]
 fn stop_radio(app: AppHandle) {
     turn_off(&app);
@@ -236,8 +281,10 @@ pub fn run() -> tauri::Result<()> {
         .plugin(mobile::screen())
         .plugin(mobile::network())
         .plugin(mobile::route())
+        .plugin(mobile::headset())
         .manage(Radio::new())
         .manage(OnScreen(AtomicBool::new(true)))
+        .manage(HeadsetFollowed(AtomicBool::new(false)))
         .invoke_handler(tauri::generate_handler![
             start_radio,
             stop_radio,
@@ -246,6 +293,7 @@ pub fn run() -> tauri::Result<()> {
             commands::request_permissions,
             commands::open_app_settings,
             commands::set_keep_screen_on,
+            commands::set_headset_button,
             commands::snapshot,
             commands::set_transmitting,
             commands::set_channel,

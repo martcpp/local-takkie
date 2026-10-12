@@ -62,6 +62,9 @@ export async function connect(): Promise<() => void> {
   if (keepsScreenOn) {
     await ask(engine.setKeepScreenOn(true))
   }
+  if (!headsetTalks) {
+    await ask(engine.setHeadsetButton(false))
+  }
   await begin(engine.permissions())
   return () => stops.forEach((stop) => stop())
 }
@@ -117,6 +120,27 @@ export const screen = {
   get keptOn() {
     return keepsScreenOn
   },
+}
+
+const HEADSET_BUTTON = 'headset-button'
+
+// On unless turned off: it is what most people with a headset want.
+let headsetTalks = $state(localStorage.getItem(HEADSET_BUTTON) !== 'no')
+
+export const headset = {
+  get talks() {
+    return headsetTalks
+  },
+}
+
+/**
+ * Lets the headset button talk (hold, or click to start and stop), or gives
+ * it back to whatever plays music. Remembered.
+ */
+export async function setHeadsetButton(on: boolean) {
+  headsetTalks = on
+  localStorage.setItem(HEADSET_BUTTON, on ? 'yes' : 'no')
+  await ask(engine.setHeadsetButton(on))
 }
 
 /** Keeps the screen from sleeping while the app is in front, and remembers it. */
