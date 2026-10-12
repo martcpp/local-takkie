@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use takkie_core::{ChannelId, Passphrase};
-use takkie_engine::{Engine, EngineConfig, EngineEvent};
+use takkie_engine::{Engine, EngineConfig, EngineEvent, EngineStats};
 use tauri::{AppHandle, State};
 
-use crate::mobile::{self, Access};
+use crate::mobile::{self, Access, Route};
 use crate::view::{DevicesView, Running, SnapshotView, peer_id};
 
 /// The running engine, or why there isn't one.
@@ -76,6 +76,16 @@ impl Radio {
         }
     }
 
+    /// Reopens the microphone and speaker where the system now sends sound.
+    pub fn reopen_audio(&self) {
+        let _ = self.with(Engine::reopen_audio);
+    }
+
+    /// The engine's running totals, for the log.
+    pub fn stats(&self) -> Option<EngineStats> {
+        self.with(|engine| engine.snapshot().stats).ok()
+    }
+
     /// Whether the engine is running.
     pub fn is_running(&self) -> bool {
         self.engine.lock().is_ok_and(|engine| engine.is_ok())
@@ -85,6 +95,13 @@ impl Radio {
     pub fn note_network(&self, on_network: bool) {
         if let Ok(mut running) = self.running.lock() {
             running.note_network(on_network);
+        }
+    }
+
+    /// Records where a phone's sound comes out.
+    pub fn note_route(&self, route: Option<Route>) {
+        if let Ok(mut running) = self.running.lock() {
+            running.note_route(route);
         }
     }
 

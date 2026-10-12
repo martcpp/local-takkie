@@ -25,8 +25,8 @@ const SNAPSHOT_EVERY: Duration = Duration::from_millis(100);
 /// How often to look whether the engine still runs while nobody is watching.
 const HIDDEN_EVERY: Duration = Duration::from_millis(500);
 
-/// How often to look whether we are still on a local network.
-const NETWORK_EVERY: Duration = Duration::from_secs(3);
+/// How often to look at the network and at where sound comes out.
+const SURROUNDINGS_EVERY: Duration = Duration::from_secs(3);
 
 /// Whether the window is on screen. Snapshots are only worth sending then.
 struct OnScreen(AtomicBool);
@@ -122,25 +122,55 @@ fn start_radio(app: AppHandle) -> Result<(), String> {
             tracing::warn!("no foreground service, so the radio stops with the screen: {error}");
         }
         stop_on_request(app.clone());
-        watch_network(app.clone());
+        watch_surroundings(app.clone());
         publish_snapshots(app);
     }
     Ok(())
 }
 
-// Ends by itself once the engine is stopped.
-fn watch_network(app: AppHandle) {
+// Follows what the engine can't see: the network we are on, and on a phone
+// where sound comes out. Ends by itself once the engine is stopped.
+fn watch_surroundings(app: AppHandle) {
     let watching = thread::Builder::new()
-        .name("takkie-app-network".into())
+        .name("takkie-app-surroundings".into())
         .spawn(move || {
+            let mut logged = None;
+            let mut routed = None;
             while app.state::<Radio>().is_running() {
                 let on_network = mobile::on_local_network(&app);
-                app.state::<Radio>().note_network(on_network);
-                thread::sleep(NETWORK_EVERY);
+                let route = mobile::current_route(&app);
+                let radio = app.state::<Radio>();
+                radio.note_network(on_network);
+                radio.note_route(route);
+                // Android leaves open streams on the device they started on.
+                if routed.is_some() && route != routed {
+                    tracing::info!(?route, "sound moved; reopening audio");
+                    radio.reopen_audio();
+                }
+                routed = route;
+                // Audio trouble is only heard, never reported, so leave a trace.
+                let stats = radio.stats();
+                if stats != logged
+                    && let Some(now) = stats
+                {
+                    tracing::info!(
+                        underruns = now.speaker_underruns,
+                        concealed = now.frames_concealed,
+                        silenced = now.frames_silenced,
+                        recovered = now.frames_recovered,
+                        mic_dropped = now.mic_dropped,
+                        block_ms = now.speaker_block_ms,
+                        received = now.packets_received,
+                        sent = now.packets_sent,
+                        "audio totals"
+                    );
+                    logged = stats;
+                }
+                thread::sleep(SURROUNDINGS_EVERY);
             }
         });
     if let Err(error) = watching {
-        tracing::warn!("a lost network won't be shown: {error}");
+        tracing::warn!("a lost network or a new headset won't be shown: {error}");
     }
 }
 
@@ -205,6 +235,7 @@ pub fn run() -> tauri::Result<()> {
         .plugin(mobile::service())
         .plugin(mobile::screen())
         .plugin(mobile::network())
+        .plugin(mobile::route())
         .manage(Radio::new())
         .manage(OnScreen(AtomicBool::new(true)))
         .invoke_handler(tauri::generate_handler![

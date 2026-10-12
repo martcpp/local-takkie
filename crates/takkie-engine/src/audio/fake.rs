@@ -102,6 +102,7 @@ pub struct FakeSink {
     underruns: usize,
     paused: bool,
     given_up: bool,
+    request: usize,
 }
 
 impl FakeSink {
@@ -116,7 +117,13 @@ impl FakeSink {
             underruns: 0,
             paused: false,
             given_up: false,
+            request: 0,
         }
+    }
+
+    /// Makes this a device that takes `samples` in one go.
+    pub fn ask_for(&mut self, samples: usize) {
+        self.request = samples;
     }
 
     /// Whether playback is paused.
@@ -189,6 +196,10 @@ impl AudioSink for FakeSink {
 
     fn give_up(&mut self) {
         self.given_up = true;
+    }
+
+    fn largest_request(&self) -> usize {
+        self.request
     }
 }
 
@@ -298,6 +309,10 @@ impl AudioSink for LiveSink {
 
     fn give_up(&mut self) {
         self.with(|sink| sink.give_up());
+    }
+
+    fn largest_request(&self) -> usize {
+        self.with(|sink| sink.largest_request()).unwrap_or(0)
     }
 }
 

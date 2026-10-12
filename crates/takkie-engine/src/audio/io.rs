@@ -8,6 +8,10 @@ pub trait AudioSource: Send {
 
     /// Copies waiting samples into `out` and returns how many. Never blocks.
     fn read(&mut self, out: &mut [f32]) -> usize;
+
+    /// Says the device has stopped giving samples, so whoever opened it
+    /// opens it again.
+    fn give_up(&mut self) {}
 }
 
 /// Mono samples for a speaker.
@@ -31,4 +35,10 @@ pub trait AudioSink: Send {
     /// Says the device has stopped taking samples, so whoever opened it
     /// opens it again.
     fn give_up(&mut self) {}
+
+    /// The most samples the device has asked for in one go. Some phones
+    /// take 80 ms at a time, and that much has to be waiting for them.
+    fn largest_request(&self) -> usize {
+        0
+    }
 }

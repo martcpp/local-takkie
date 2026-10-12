@@ -68,6 +68,12 @@ pub trait DeviceOpener: Send {
         &mut self,
         name: Option<&str>,
     ) -> Result<Opened<Box<dyn AudioSink>>, SessionError>;
+
+    /// The name of the system's default device right now, if it can be
+    /// told. The session uses it to follow a headset being plugged in.
+    fn default_device(&mut self, _direction: Direction) -> Option<String> {
+        None
+    }
 }
 
 /// Real devices through cpal.
@@ -101,6 +107,10 @@ impl DeviceOpener for CpalOpener {
             stream: Box::new(sink),
             warning: chosen.warning,
         })
+    }
+
+    fn default_device(&mut self, direction: Direction) -> Option<String> {
+        find_device(direction, None).ok().map(|chosen| chosen.name)
     }
 }
 
@@ -138,6 +148,9 @@ struct Side<T> {
     thread: Option<T>,
     counters: Option<Arc<Counters>>,
     last_try: Option<Instant>,
+    // The system default's name when this was opened on it; `None` for a
+    // device the user picked, which is never swapped for another.
+    default: Option<String>,
 }
 
 impl<T> Side<T> {
@@ -146,7 +159,20 @@ impl<T> Side<T> {
             thread: Some(thread),
             counters: Some(counters),
             last_try: None,
+            default: None,
         }
+    }
+
+    /// Whether the system default is now a different device from the one
+    /// this side runs on.
+    fn left_behind(&self, default_now: Option<&str>) -> bool {
+        self.thread.is_some()
+            && matches!((self.default.as_deref(), default_now), (Some(was), Some(now)) if was != now)
+    }
+
+    fn close(&mut self) {
+        self.thread = None;
+        self.last_try = None;
     }
 
     fn lost(&self) -> bool {
@@ -167,7 +193,11 @@ pub struct AudioSession<O: DeviceOpener> {
     wiring: Wiring,
     input: Side<TxThread>,
     output: Side<MixThread>,
+    defaults_checked: Option<Instant>,
 }
+
+/// How often to ask the system which devices are its defaults.
+const DEFAULTS_EVERY: Duration = Duration::from_secs(2);
 
 impl<O: DeviceOpener> AudioSession<O> {
     /// Opens both devices and starts the threads.
@@ -182,15 +212,22 @@ impl<O: DeviceOpener> AudioSession<O> {
     ) -> Result<(Self, Vec<AudioEvent>), SessionError> {
         let mut events = Vec::new();
         let sink = opener.open_output(output)?;
-        let mix = spawn_mix(&wiring, sink, &mut events)?;
+        let mut mix = spawn_mix(&wiring, sink, &mut events)?;
         let source = opener.open_input(input)?;
-        let tx = spawn_tx(&wiring, source, &mut events)?;
+        let mut tx = spawn_tx(&wiring, source, &mut events)?;
+        if output.is_none() {
+            mix.default = opener.default_device(Direction::Output);
+        }
+        if input.is_none() {
+            tx.default = opener.default_device(Direction::Input);
+        }
         Ok((
             Self {
                 opener,
                 wiring,
                 input: tx,
                 output: mix,
+                defaults_checked: None,
             },
             events,
         ))
@@ -200,6 +237,7 @@ impl<O: DeviceOpener> AudioSession<O> {
     /// once a second.
     pub fn poll(&mut self, now: Instant) -> Vec<AudioEvent> {
         let mut events = Vec::new();
+        self.follow_defaults(now);
         if self.input.lost() {
             self.input.thread = None;
             events.push(AudioEvent::DeviceLost(Direction::Input));
@@ -214,6 +252,7 @@ impl<O: DeviceOpener> AudioSession<O> {
                 && let Ok(side) = spawn_mix(&self.wiring, sink, &mut events)
             {
                 self.output = side;
+                self.output.default = self.opener.default_device(Direction::Output);
             }
         }
         if self.input.due(now) {
@@ -222,9 +261,44 @@ impl<O: DeviceOpener> AudioSession<O> {
                 && let Ok(side) = spawn_tx(&self.wiring, source, &mut events)
             {
                 self.input = side;
+                self.input.default = self.opener.default_device(Direction::Input);
             }
         }
         events
+    }
+
+    // Plugging a headset in doesn't break the stream on the speakers, so
+    // nothing is "lost": the system just starts preferring another device.
+    fn follow_defaults(&mut self, now: Instant) {
+        if self
+            .defaults_checked
+            .is_some_and(|at| now.saturating_duration_since(at) < DEFAULTS_EVERY)
+        {
+            return;
+        }
+        self.defaults_checked = Some(now);
+        if self.output.default.is_some() {
+            let default = self.opener.default_device(Direction::Output);
+            if self.output.left_behind(default.as_deref()) {
+                tracing::info!(?default, "the default speaker changed; moving to it");
+                self.output.close();
+            }
+        }
+        if self.input.default.is_some() {
+            let default = self.opener.default_device(Direction::Input);
+            if self.input.left_behind(default.as_deref()) {
+                tracing::info!(?default, "the default microphone changed; moving to it");
+                self.input.close();
+            }
+        }
+    }
+
+    /// Closes both devices, so the next [`poll`](Self::poll) opens the
+    /// current defaults. For when the system moved sound somewhere else,
+    /// like a headset being plugged in.
+    pub fn reopen(&mut self) {
+        self.input.close();
+        self.output.close();
     }
 
     /// The running mic's counters.
@@ -289,6 +363,7 @@ mod tests {
         opened: Arc<Mutex<Opens>>,
         counters: Arc<Mutex<Vec<Arc<Counters>>>>,
         failures: Arc<Mutex<u32>>,
+        default_output: Arc<Mutex<Option<String>>>,
     }
 
     struct FakeOpener(Log);
@@ -340,6 +415,13 @@ mod tests {
                 counters,
                 warning: None,
             })
+        }
+
+        fn default_device(&mut self, direction: Direction) -> Option<String> {
+            match direction {
+                Direction::Output => self.0.default_output.lock().unwrap().clone(),
+                Direction::Input => None,
+            }
         }
     }
 
@@ -446,5 +528,58 @@ mod tests {
             mix: MixShared::default(),
         };
         assert!(AudioSession::start(FakeOpener(log), None, None, wiring).is_err());
+    }
+
+    fn wiring() -> Wiring {
+        let (tx_events, _) = unbounded();
+        let (_, packets) = unbounded();
+        Wiring {
+            transmitting: Arc::default(),
+            level: Arc::default(),
+            tx_events,
+            packets,
+            mix: MixShared::default(),
+        }
+    }
+
+    fn opened(log: &Log, direction: Direction) -> usize {
+        let opened = log.opened.lock().unwrap();
+        opened.iter().filter(|(d, _)| *d == direction).count()
+    }
+
+    #[test]
+    fn the_speaker_follows_the_system_default_to_a_headset_and_back() {
+        let log = Log::default();
+        *log.default_output.lock().unwrap() = Some("Speakers".into());
+        let wiring = wiring();
+        let (mut session, _) =
+            AudioSession::start(FakeOpener(log.clone()), None, None, wiring).unwrap();
+        let t0 = Instant::now();
+        session.poll(t0);
+        assert_eq!(opened(&log, Direction::Output), 1);
+
+        *log.default_output.lock().unwrap() = Some("Headphones".into());
+        session.poll(t0 + Duration::from_secs(3));
+        assert_eq!(opened(&log, Direction::Output), 2);
+        assert_eq!(opened(&log, Direction::Input), 1);
+
+        session.poll(t0 + Duration::from_secs(6));
+        assert_eq!(opened(&log, Direction::Output), 2);
+
+        *log.default_output.lock().unwrap() = Some("Speakers".into());
+        session.poll(t0 + Duration::from_secs(9));
+        assert_eq!(opened(&log, Direction::Output), 3);
+    }
+
+    #[test]
+    fn a_speaker_the_user_picked_is_not_swapped_for_the_default() {
+        let log = Log::default();
+        *log.default_output.lock().unwrap() = Some("Speakers".into());
+        let wiring = wiring();
+        let (mut session, _) =
+            AudioSession::start(FakeOpener(log.clone()), None, Some("USB"), wiring).unwrap();
+        *log.default_output.lock().unwrap() = Some("Headphones".into());
+        session.poll(Instant::now() + Duration::from_secs(3));
+        assert_eq!(opened(&log, Direction::Output), 1);
     }
 }
