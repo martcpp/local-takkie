@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{
-    BuildStreamError, FromSample, I24, PlayStreamError, Sample, SampleFormat, SizedSample, Stream,
-    SupportedStreamConfig, U24,
+    ErrorKind, FromSample, I24, Sample, SampleFormat, SizedSample, Stream, SupportedStreamConfig,
+    U24,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
@@ -49,15 +49,26 @@ pub struct Counters {
     pub lost: AtomicBool,
     /// The most frames the speaker has asked for in one callback.
     pub largest_request: AtomicU32,
+    /// The system refused a real-time audio thread, or on Android its
+    /// low-latency path. The stream still runs.
+    pub realtime_denied: AtomicBool,
 }
 
 impl Counters {
-    fn record(&self, error: &cpal::StreamError) {
-        if matches!(
-            error,
-            cpal::StreamError::DeviceNotAvailable | cpal::StreamError::StreamInvalidated
-        ) {
-            self.lost.store(true, Relaxed);
+    // May run on the audio thread: atomics only.
+    fn record(&self, error: &cpal::Error) {
+        match error.kind() {
+            // The route moving to another device ends this stream too.
+            ErrorKind::DeviceNotAvailable
+            | ErrorKind::StreamInvalidated
+            | ErrorKind::DeviceChanged => self.lost.store(true, Relaxed),
+            // Not an error for us: the stream runs, just without the
+            // system's fast path.
+            ErrorKind::RealtimeDenied => {
+                self.realtime_denied.store(true, Relaxed);
+                return;
+            }
+            _ => {}
         }
         self.errors.fetch_add(1, Relaxed);
     }
@@ -68,10 +79,10 @@ impl Counters {
 pub enum OpenError {
     /// cpal couldn't build it.
     #[error("couldn't open the audio stream: {0}")]
-    Build(#[from] BuildStreamError),
+    Build(cpal::Error),
     /// cpal couldn't start it.
     #[error("couldn't start the audio stream: {0}")]
-    Play(#[from] PlayStreamError),
+    Play(cpal::Error),
     /// A sample format newer than this code.
     #[error("the device uses {0} samples, which aren't supported")]
     Format(SampleFormat),
@@ -154,13 +165,15 @@ impl CpalSource {
         let counters = Arc::new(Counters::default());
         let on_data = Arc::clone(&counters);
         let on_error = Arc::clone(&counters);
-        let stream = device.build_input_stream::<T, _, _>(
-            &config.config(),
-            move |data: &[T], _| capture(data, channels, &mut producer, &on_data.dropped),
-            move |error| on_error.record(&error),
-            None,
-        )?;
-        stream.play()?;
+        let stream = device
+            .build_input_stream::<T, _, _>(
+                config.config(),
+                move |data: &[T], _| capture(data, channels, &mut producer, &on_data.dropped),
+                move |error| on_error.record(&error),
+                None,
+            )
+            .map_err(OpenError::Build)?;
+        stream.play().map_err(OpenError::Play)?;
         Ok(Self {
             _stream: stream,
             ring: consumer,
@@ -225,17 +238,19 @@ impl CpalSink {
         let counters = Arc::new(Counters::default());
         let on_data = Arc::clone(&counters);
         let on_error = Arc::clone(&counters);
-        let stream = device.build_output_stream::<T, _, _>(
-            &config.config(),
-            move |data: &mut [T], _| {
-                let frames = u32::try_from(data.len() / channels.max(1)).unwrap_or(u32::MAX);
-                on_data.largest_request.fetch_max(frames, Relaxed);
-                playback(data, channels, &mut consumer, &on_data.underruns);
-            },
-            move |error| on_error.record(&error),
-            None,
-        )?;
-        stream.play()?;
+        let stream = device
+            .build_output_stream::<T, _, _>(
+                config.config(),
+                move |data: &mut [T], _| {
+                    let frames = u32::try_from(data.len() / channels.max(1)).unwrap_or(u32::MAX);
+                    on_data.largest_request.fetch_max(frames, Relaxed);
+                    playback(data, channels, &mut consumer, &on_data.underruns);
+                },
+                move |error| on_error.record(&error),
+                None,
+            )
+            .map_err(OpenError::Build)?;
+        stream.play().map_err(OpenError::Play)?;
         Ok(Self {
             stream,
             ring: producer,
