@@ -43,11 +43,6 @@ impl Radio {
         self.talk()
     }
 
-    /// Whether the headset button is what keeps us talking.
-    pub fn headset_talks(&self) -> bool {
-        self.headset_talks.load(Relaxed)
-    }
-
     fn talk(&self) -> Result<(), String> {
         let on = self.screen_talks.load(Relaxed) || self.headset_talks.load(Relaxed);
         self.with(|engine| engine.set_transmitting(on))
@@ -287,9 +282,12 @@ mod tests {
         assert_eq!(radio.view().err(), asked.err());
         assert!(!radio.is_running());
         assert!(radio.talk_from_headset(true).is_err());
-        assert!(radio.headset_talks());
+        assert!(radio.headset_talks.load(Relaxed));
         radio.stop("the app is closing");
-        assert!(!radio.headset_talks(), "stopping lets go of the button");
+        assert!(
+            !radio.headset_talks.load(Relaxed),
+            "stopping lets go of the button"
+        );
         let asked = radio.with(|engine| engine.set_muted(true));
         assert_eq!(
             asked,

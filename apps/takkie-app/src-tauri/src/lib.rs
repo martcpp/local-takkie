@@ -1,7 +1,6 @@
 //! The local-takkie desktop and Android app: a Tauri window around the engine.
 
 mod commands;
-mod headset;
 mod mobile;
 mod view;
 
@@ -217,29 +216,17 @@ fn follow_headset(app: AppHandle) {
     let following = thread::Builder::new()
         .name("takkie-app-headset".into())
         .spawn(move || {
-            let mut talk = headset::HeadsetTalk::default();
             loop {
-                let pressed = match mobile::wait_for_button(&app) {
-                    Ok(pressed) => pressed,
+                // Talk while it is held, like the button on the screen.
+                match mobile::wait_for_button(&app) {
+                    Ok(pressed) => {
+                        tracing::info!(pressed, "headset button");
+                        let _ = app.state::<Radio>().talk_from_headset(pressed);
+                    }
                     Err(error) => {
                         tracing::debug!("not following a headset button: {error}");
                         return;
                     }
-                };
-                let radio = app.state::<Radio>();
-                // The radio was stopped, or the switch turned off, meanwhile.
-                if talk.is_talking() && !radio.headset_talks() {
-                    talk.reset();
-                }
-                let now = Instant::now();
-                let talking = if pressed {
-                    talk.press(now)
-                } else {
-                    talk.release(now)
-                };
-                tracing::info!(pressed, talking, "headset button");
-                if radio.talk_from_headset(talking).is_err() {
-                    talk.reset();
                 }
             }
         });

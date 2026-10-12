@@ -134,8 +134,8 @@ export const headset = {
 }
 
 /**
- * Lets the headset button talk (hold, or click to start and stop), or gives
- * it back to whatever plays music. Remembered.
+ * Lets the headset button talk while it is held, or gives it back to
+ * whatever plays music. Remembered.
  */
 export async function setHeadsetButton(on: boolean) {
   headsetTalks = on
