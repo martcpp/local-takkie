@@ -95,6 +95,19 @@
       ✨ Clarity: {snapshot.clarity}
     </button>
   </div>
+  <details class="echo">
+    <summary>Hearing an echo?</summary>
+    <ul>
+      <li>
+        <strong>A voice sounds far away:</strong> the talker should hold the microphone close to
+        their mouth, or use a headset.
+      </li>
+      <li>
+        <strong>A voice twice, a moment apart:</strong> you are in the same room as the talker.
+        Wear headphones, or mute that person in the list.
+      </li>
+    </ul>
+  </details>
 </section>
 
 <style>
@@ -120,6 +133,28 @@
     margin: 0.375rem 0 0;
     color: var(--warning, #b45309);
     font-size: 0.875rem;
+  }
+
+  .echo {
+    margin-top: 0.625rem;
+    color: var(--muted);
+    font-size: 0.875rem;
+  }
+
+  .echo summary {
+    cursor: pointer;
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+  }
+
+  .echo ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1.125rem;
+  }
+
+  .echo li + li {
+    margin-top: 0.375rem;
   }
 
   .volume {

@@ -110,6 +110,9 @@ fn main() -> ExitCode {
     if let Some(note) = settings_note {
         app.note(note);
     }
+    if !current.half_duplex {
+        app.note("🎧 Half-duplex is off: wear headphones, or the others hear themselves back");
+    }
     let result = ui::tui::run(app, &engine, &events, &panel);
 
     if let (Some(_), Some(path)) = (&saved, &settings_path) {
