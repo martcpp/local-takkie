@@ -266,7 +266,7 @@ Rules:
 |---|---|---|
 | Internal format | Mono, f32, 48 kHz | Voice needs only one channel. 48 kHz is Opus's native rate. |
 | Frame size | 20 ms (960 samples) | Standard Opus VoIP frame |
-| Codec | Opus, `Application::Voip`, ~24 kbit/s | Good voice quality, about 5 KB/s per sender including headers |
+| Codec | Opus, `Application::Voip`, ~32 kbit/s | The lowest rate where Opus keeps the full voice (to 20 kHz) with FEC on; at 24 kbit/s it drops to 8 kHz. About 6 KB/s per sender including headers |
 | Loss handling | Opus in-band FEC on, expected loss 10%, PLC for missing packets | Smooths over Wi-Fi packet loss |
 | Jitter buffer | Target ~60 ms, max 200 ms, per sender | Absorbs network timing jitter without the delay growing |
 | Device rate ≠ 48 kHz | Resample with `rubato` | Works with 44.1 kHz, 16 kHz, Bluetooth, etc. |
@@ -693,7 +693,7 @@ minutes with no crash.
 | E6.2 | Config negotiation: prefer 48 kHz/f32, otherwise use the device default. Support all sample formats. |
 | E6.3 | Resampling with `rubato` in both directions when the device is not 48 kHz. |
 | E6.4 | Real-time-safe input and output callbacks with `rtrb` (rules in 5.4). |
-| E6.5 | tx thread: 20 ms frames, PTT gate, Opus encoder (mono, VoIP, 24 kbit/s, FEC), level meter. |
+| E6.5 | tx thread: 20 ms frames, PTT gate, Opus encoder (mono, VoIP, 32 kbit/s since E20.6, FEC), level meter. |
 | E6.6 | mix thread: one Opus decoder per sender, PLC/FEC from the jitter buffer, mixing, volume, mute, half-duplex. |
 | E6.7 | Device unplugged: emit an event and reopen the default device. |
 | E6.8 | `AudioSource`/`AudioSink` traits with fake implementations for tests. |
