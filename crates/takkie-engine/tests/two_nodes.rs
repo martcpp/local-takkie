@@ -14,6 +14,7 @@ use takkie_core::PeerId;
 use takkie_engine::audio::fake::{FakeSink, FakeSource, LiveSink, LiveSource, Signal};
 use takkie_engine::audio::mix::{MixShared, MixThread};
 use takkie_engine::audio::tx::{LevelMeter, TxThread};
+use takkie_engine::audio::voice::VoiceControls;
 use takkie_engine::net::hello::HelloThread;
 use takkie_engine::net::peers::{PEER_TIMEOUT, PeerOutputs, PeerThread, Peers};
 use takkie_engine::net::rx::{RxOutputs, RxThread};
@@ -62,7 +63,7 @@ fn node(
         Box::new(mic),
         Arc::clone(&transmitting),
         Arc::new(LevelMeter::default()),
-        Arc::default(),
+        Arc::new(VoiceControls::raw()),
         tx_events,
     )?;
     let sender = Arc::new(PacketSender::new(
@@ -85,14 +86,12 @@ fn node(
         },
     )?;
     let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
-    let mix = MixThread::spawn(
-        audio_out,
-        Box::new(speaker.clone()),
-        MixShared {
-            transmitting,
-            ..MixShared::default()
-        },
-    )?;
+    let shared = MixShared {
+        transmitting,
+        ..MixShared::default()
+    };
+    shared.controls.set_even_voices(false);
+    let mix = MixThread::spawn(audio_out, Box::new(speaker.clone()), shared)?;
     let (events, _) = unbounded();
     let table = Peers::new(channel, targets, PEER_TIMEOUT);
     let known = table.view();

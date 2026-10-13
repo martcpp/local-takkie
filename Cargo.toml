@@ -44,6 +44,25 @@ debug = false
 [profile.dev.package.argon2]
 opt-level = 3
 
+# The audio path can't keep up with real time unoptimised: Opus, the
+# denoiser, the resampler and the FFTs under them. Our own audio code too.
+[profile.dev.package.opusic-sys]
+opt-level = 3
+[profile.dev.package.nnnoiseless]
+opt-level = 3
+[profile.dev.package.easyfft]
+opt-level = 3
+[profile.dev.package.rubato]
+opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3
+[profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.num-complex]
+opt-level = 3
+[profile.dev.package.takkie-core]
+opt-level = 2
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
