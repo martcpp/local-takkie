@@ -31,6 +31,7 @@ use crate::net::rx::{RxCounters, RxOutputs, RxThread};
 use crate::net::send::{PacketSender, SendCounters, SendThread};
 use crate::net::{Transport, UdpTransport};
 use crate::threads::{STOP_WITHIN, join_within};
+use takkie_core::voice::Clarity;
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
 // Often enough that a newcomer finds a sleeping phone within a few seconds.
@@ -80,6 +81,8 @@ pub struct EngineConfig {
     pub noise_suppression: NoiseSuppression,
     /// Bring quiet and loud talkers to the same level.
     pub auto_level: bool,
+    /// How much the part of the voice that carries words is lifted.
+    pub clarity: Clarity,
 }
 
 impl Default for EngineConfig {
@@ -96,6 +99,7 @@ impl Default for EngineConfig {
             beeps: false,
             noise_suppression: NoiseSuppression::default(),
             auto_level: true,
+            clarity: Clarity::default(),
         }
     }
 }
@@ -366,6 +370,7 @@ impl Engine {
         let voice = VoiceControls::default();
         voice.set_noise_suppression(config.noise_suppression);
         voice.set_auto_level(config.auto_level);
+        voice.set_clarity(config.clarity);
 
         let (packets_in, packets) = unbounded();
         let (news_in, news) = unbounded();
@@ -537,6 +542,11 @@ impl Engine {
     /// Turns the automatic microphone level on or off.
     pub fn set_auto_level(&self, on: bool) {
         self.shared.voice.set_auto_level(on);
+    }
+
+    /// Sets how much the part of the voice that carries words is lifted.
+    pub fn set_clarity(&self, clarity: Clarity) {
+        self.shared.voice.set_clarity(clarity);
     }
 
     /// Turns the start and end beeps on or off.
@@ -865,6 +875,7 @@ mod tests {
         let config = EngineConfig {
             noise_suppression: NoiseSuppression::Off,
             auto_level: false,
+            clarity: Clarity::Off,
             ..config
         };
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
