@@ -55,6 +55,12 @@ impl Leveller {
         self.gain_db
     }
 
+    /// Whether the talker is so quiet that the gain has reached its limit.
+    #[must_use]
+    pub fn straining(&self) -> bool {
+        self.gain_db >= MOST_GAIN_DB - 1.0
+    }
+
     /// Levels one frame in place.
     pub fn process(&mut self, frame: &mut [f32]) {
         let level = Level::of(frame);
@@ -109,25 +115,115 @@ impl Leveller {
     }
 }
 
-/// How much the part of a voice that carries the words is lifted.
+/// How hard a stage of the voice processing works.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Clarity {
-    /// The voice as it is.
+pub enum Strength {
+    /// Not at all.
     Off,
-    /// A gentle lift.
+    /// Enough to help without being heard.
     #[default]
     Normal,
-    /// A strong lift, for a loud room and a small speaker.
+    /// As much as it can, for a loud room.
     Strong,
 }
 
-impl Clarity {
-    // (lift around 3 kHz, cut below 250 Hz), in dB.
-    fn shape(self) -> Option<(f32, f32)> {
+impl Strength {
+    /// The word for it in settings files and on screen.
+    #[must_use]
+    pub fn name(self) -> &'static str {
         match self {
-            Self::Off => None,
-            Self::Normal => Some((4.0, -3.0)),
-            Self::Strong => Some((7.0, -5.0)),
+            Self::Off => "off",
+            Self::Normal => "normal",
+            Self::Strong => "strong",
+        }
+    }
+
+    /// The strength called `name`, if there is one.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Off, Self::Normal, Self::Strong]
+            .into_iter()
+            .find(|strength| strength.name() == name)
+    }
+
+    /// The next one, for a key that steps through them.
+    #[must_use]
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Normal,
+            Self::Normal => Self::Strong,
+            Self::Strong => Self::Off,
+        }
+    }
+}
+
+/// How much the part of a voice that carries the words is lifted.
+pub type Clarity = Strength;
+
+// (lift around 3 kHz, cut below 250 Hz), in dB.
+fn shape(clarity: Clarity) -> Option<(f32, f32)> {
+    match clarity {
+        Clarity::Off => None,
+        Clarity::Normal => Some((4.0, -3.0)),
+        Clarity::Strong => Some((7.0, -5.0)),
+    }
+}
+
+/// What to tell the person about their microphone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MicAdvice {
+    /// Nothing: it sounds fine.
+    #[default]
+    Fine,
+    /// Too quiet even with all the gain there is: move closer.
+    TooQuiet,
+    /// So loud it distorts: move back or turn the input down.
+    Clipping,
+}
+
+impl MicAdvice {
+    /// The word for it on the wire to a frontend.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fine => "fine",
+            Self::TooQuiet => "quiet",
+            Self::Clipping => "clipping",
+        }
+    }
+}
+
+const CLIPS_AT: f32 = 0.98;
+// Frames a warning stays up after its cause, so it can be read: 2 s.
+const SHOWN_FOR: u32 = 100;
+
+/// Watches the microphone for a level no processing can fix.
+#[derive(Clone, Debug, Default)]
+pub struct MicWatch {
+    clipped: u32,
+    strained: u32,
+}
+
+impl MicWatch {
+    /// Takes one frame's peak, as the microphone gave it, and whether the
+    /// automatic level has run out of gain.
+    pub fn hear(&mut self, peak: f32, straining: bool) -> MicAdvice {
+        self.clipped = if peak >= CLIPS_AT {
+            SHOWN_FOR
+        } else {
+            self.clipped.saturating_sub(1)
+        };
+        self.strained = if straining {
+            SHOWN_FOR
+        } else {
+            self.strained.saturating_sub(1)
+        };
+        if self.clipped > 0 {
+            MicAdvice::Clipping
+        } else if self.strained > 0 {
+            MicAdvice::TooQuiet
+        } else {
+            MicAdvice::Fine
         }
     }
 }
@@ -164,7 +260,7 @@ impl Shaper {
     pub fn process(&mut self, frame: &mut [f32], clarity: Clarity) {
         if clarity != self.clarity {
             self.clarity = clarity;
-            let (lift, cut) = clarity.shape().unwrap_or_default();
+            let (lift, cut) = shape(clarity).unwrap_or_default();
             self.presence = Biquad::peaking(PRESENCE_HZ, lift, PRESENCE_Q, self.sample_rate);
             self.body = Biquad::low_shelf(BODY_HZ, cut, self.sample_rate);
         }
@@ -327,6 +423,37 @@ mod tests {
             Level::of(&second[12_000..]).rms,
         );
         assert!((20.0 * (strong / normal).log10() - 3.0).abs() < 0.3);
+    }
+
+    #[test]
+    fn strengths_have_names_and_step_round() {
+        for strength in [Strength::Off, Strength::Normal, Strength::Strong] {
+            assert_eq!(Strength::from_name(strength.name()), Some(strength));
+        }
+        assert_eq!(Strength::from_name("loud"), None);
+        assert_eq!(Strength::Off.next().next().next(), Strength::Off);
+    }
+
+    #[test]
+    fn a_clipping_microphone_is_reported_and_the_warning_lingers() {
+        let mut watch = MicWatch::default();
+        assert_eq!(watch.hear(0.5, false), MicAdvice::Fine);
+        assert_eq!(watch.hear(1.0, false), MicAdvice::Clipping);
+        for _ in 0..SHOWN_FOR - 1 {
+            assert_eq!(watch.hear(0.1, false), MicAdvice::Clipping);
+        }
+        assert_eq!(watch.hear(0.1, false), MicAdvice::Fine);
+    }
+
+    #[test]
+    fn a_whisper_the_gain_cannot_reach_is_reported() {
+        let mut leveller = Leveller::new(RATE);
+        assert!(!leveller.straining());
+        levelled(&mut leveller, talk(20, 0.003, 0.0001));
+        assert!(leveller.straining());
+        let mut watch = MicWatch::default();
+        assert_eq!(watch.hear(0.003, true), MicAdvice::TooQuiet);
+        assert_eq!(watch.hear(1.0, true), MicAdvice::Clipping);
     }
 
     #[test]

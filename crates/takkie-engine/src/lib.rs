@@ -13,4 +13,4 @@ pub use audio::voice::NoiseSuppression;
 pub use engine::{
     Engine, EngineConfig, EngineError, EngineEvent, EngineSnapshot, EngineStats, PeerInfo,
 };
-pub use takkie_core::voice::Clarity;
+pub use takkie_core::voice::{Clarity, MicAdvice, Strength};

@@ -58,6 +58,9 @@ green dot while they talk. Press `?` in the app for the list of keys:
 | `↑` / `↓` | Pick someone in the peer list |
 | `X` | Mute or unmute the picked person, for you only |
 | `B` | Beeps on or off |
+| `N` | Noise removal: off, normal or strong |
+| `L` | Even out a quiet or loud voice, on or off |
+| `C` | Clarity lift: off, normal or strong |
 | `D` | Show the microphone and speaker in use |
 | `1`–`9`, `0` | Switch to channel 1 to 10 |
 | `P` | Set or clear this channel's passphrase |
@@ -71,6 +74,14 @@ choose one with the digit keys or `--channel`.
 **Beeps.** Press `B` to hear a short tone when someone finishes talking and
 another when you start. They are off by default, your choice is remembered,
 and they are made on your own device, so nobody else hears yours.
+
+**A clear voice.** Before your voice is sent, takkie removes background
+noise, brings a quiet or loud voice to the same level, and lifts the part of
+the voice that carries the words. All three are on by default; `N`, `L` and
+`C` change them, and your choices are remembered. In a loud room, hold the
+microphone close to your mouth or use a headset: no setting makes up for a
+microphone that hears more room than voice. If the levels box says the
+microphone is too loud or too quiet, move back or closer.
 
 **Private channels.** A channel is open by default: anyone on the same
 network can listen and talk. Press `P` and type a passphrase to make it

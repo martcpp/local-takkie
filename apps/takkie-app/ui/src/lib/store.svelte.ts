@@ -4,6 +4,7 @@
 import * as engine from './engine'
 import {
   SHORT_PASSPHRASE,
+  asStrength,
   initial,
   micGate,
   withAccess,
@@ -76,6 +77,7 @@ async function begin(asked: Promise<engine.Access>) {
     state = withAccess(state, await asked)
     if (state.access && micGate(state.access) === 'ready') {
       await engine.startRadio()
+      await restoreVoice()
       state = withSnapshot(state, await engine.snapshot(), Date.now())
     }
   } catch (problem) {
@@ -187,3 +189,41 @@ export const setPeerMuted = (peer: string, muted: boolean) => ask(engine.setPeer
 export const setMuted = (muted: boolean) => ask(engine.setMuted(muted))
 export const setVolume = (volume: number) => ask(engine.setVolume(volume))
 export const setBeeps = (on: boolean) => ask(engine.setBeeps(on))
+
+const NOISE = 'noise-suppression'
+const AUTO_LEVEL = 'auto-level'
+const CLARITY = 'clarity'
+
+// The radio starts with its defaults, so what was chosen is set again.
+async function restoreVoice() {
+  const noise = asStrength(localStorage.getItem(NOISE))
+  if (noise) {
+    await ask(engine.setNoiseSuppression(noise))
+  }
+  const level = localStorage.getItem(AUTO_LEVEL)
+  if (level) {
+    await ask(engine.setAutoLevel(level === 'yes'))
+  }
+  const clarity = asStrength(localStorage.getItem(CLARITY))
+  if (clarity) {
+    await ask(engine.setClarity(clarity))
+  }
+}
+
+/** How hard background noise is removed from the microphone. Remembered. */
+export async function setNoiseSuppression(level: engine.Strength) {
+  localStorage.setItem(NOISE, level)
+  await ask(engine.setNoiseSuppression(level))
+}
+
+/** Brings quiet and loud talkers to the same level, or not. Remembered. */
+export async function setAutoLevel(on: boolean) {
+  localStorage.setItem(AUTO_LEVEL, on ? 'yes' : 'no')
+  await ask(engine.setAutoLevel(on))
+}
+
+/** How much the part of the voice that carries words is lifted. Remembered. */
+export async function setClarity(level: engine.Strength) {
+  localStorage.setItem(CLARITY, level)
+  await ask(engine.setClarity(level))
+}

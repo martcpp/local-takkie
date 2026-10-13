@@ -5,42 +5,32 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
 
 use nnnoiseless::DenoiseState;
 use takkie_core::dsp::{Biquad, Level};
-use takkie_core::voice::{Clarity, Leveller, Shaper};
+use takkie_core::voice::{Clarity, Leveller, MicAdvice, MicWatch, Shaper, Strength};
 
 use super::config::PREFERRED_RATE;
 
 // Below this a voice has nothing, only rumble, handling noise and wind.
 const LOW_CUT_HZ: f32 = 100.0;
 
-/// How hard background noise is pushed down.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum NoiseSuppression {
-    /// The microphone as it is.
-    Off,
-    /// Most of the noise gone, a little left so the voice sounds natural.
-    #[default]
-    Normal,
-    /// As much as can be removed.
-    Strong,
+/// How hard background noise is pushed down. Normal leaves a little so the
+/// voice sounds natural; strong removes all it can.
+pub type NoiseSuppression = Strength;
+
+// How much of the cleaned sound is used; the rest is the microphone.
+// 0.85 leaves the noise about 13 dB down, and measured as clear as 1.0.
+fn cleaned(level: NoiseSuppression) -> f32 {
+    match level {
+        Strength::Off => 0.0,
+        Strength::Normal => 0.85,
+        Strength::Strong => 1.0,
+    }
 }
 
-impl NoiseSuppression {
-    // How much of the cleaned sound is used; the rest is the microphone.
-    // 0.85 leaves the noise about 13 dB down, and measured as clear as 1.0.
-    fn cleaned(self) -> f32 {
-        match self {
-            Self::Off => 0.0,
-            Self::Normal => 0.85,
-            Self::Strong => 1.0,
-        }
-    }
-
-    fn from_u8(value: u8) -> Self {
-        match value {
-            0 => Self::Off,
-            2 => Self::Strong,
-            _ => Self::Normal,
-        }
+fn strength(value: u8) -> Strength {
+    match value {
+        0 => Strength::Off,
+        2 => Strength::Strong,
+        _ => Strength::Normal,
     }
 }
 
@@ -53,6 +43,7 @@ pub struct VoiceControls {
     noise: AtomicU8,
     auto_level: AtomicBool,
     clarity: AtomicU8,
+    advice: AtomicU8,
 }
 
 impl Default for VoiceControls {
@@ -62,6 +53,7 @@ impl Default for VoiceControls {
             noise: AtomicU8::new(NoiseSuppression::default() as u8),
             auto_level: AtomicBool::new(true),
             clarity: AtomicU8::new(Clarity::default() as u8),
+            advice: AtomicU8::new(0),
         }
     }
 }
@@ -75,6 +67,7 @@ impl VoiceControls {
             noise: AtomicU8::new(NoiseSuppression::Off as u8),
             auto_level: AtomicBool::new(false),
             clarity: AtomicU8::new(Clarity::Off as u8),
+            advice: AtomicU8::new(0),
         }
     }
 
@@ -97,7 +90,7 @@ impl VoiceControls {
     /// How hard noise is pushed down.
     #[must_use]
     pub fn noise_suppression(&self) -> NoiseSuppression {
-        NoiseSuppression::from_u8(self.noise.load(Relaxed))
+        strength(self.noise.load(Relaxed))
     }
 
     /// Turns the automatic level on or off.
@@ -119,10 +112,16 @@ impl VoiceControls {
     /// How much the part of the voice that carries words is lifted.
     #[must_use]
     pub fn clarity(&self) -> Clarity {
-        match self.clarity.load(Relaxed) {
-            0 => Clarity::Off,
-            2 => Clarity::Strong,
-            _ => Clarity::Normal,
+        strength(self.clarity.load(Relaxed))
+    }
+
+    /// What the voice processing last found wrong with the microphone.
+    #[must_use]
+    pub fn mic_advice(&self) -> MicAdvice {
+        match self.advice.load(Relaxed) {
+            1 => MicAdvice::TooQuiet,
+            2 => MicAdvice::Clipping,
+            _ => MicAdvice::Fine,
         }
     }
 }
@@ -166,7 +165,7 @@ impl Denoiser {
             }
             self.running = true;
         }
-        let cleaned = level.cleaned();
+        let cleaned = cleaned(level);
         // A frame that isn't whole blocks keeps its tail as it is.
         for block in frame.as_chunks_mut::<BLOCK>().0 {
             for (scaled, sample) in self.input.iter_mut().zip(block.iter()) {
@@ -200,6 +199,7 @@ pub struct VoiceChain {
     denoiser: Denoiser,
     leveller: Leveller,
     shaper: Shaper,
+    watch: MicWatch,
 }
 
 impl Default for VoiceChain {
@@ -209,6 +209,7 @@ impl Default for VoiceChain {
             denoiser: Denoiser::new(),
             leveller: Leveller::new(PREFERRED_RATE),
             shaper: Shaper::new(PREFERRED_RATE),
+            watch: MicWatch::default(),
         }
     }
 }
@@ -218,12 +219,15 @@ impl VoiceChain {
     /// `controls` has on. Returns how loud the microphone was, before the
     /// automatic level evened it out.
     pub fn process(&mut self, frame: &mut [f32], controls: &VoiceControls) -> Level {
+        let peak = Level::of(frame).peak;
         self.cut_lows(frame, controls);
         self.denoiser.process(frame, controls.noise_suppression());
         let heard = Level::of(frame);
         if controls.auto_level() {
             self.leveller.process(frame);
         }
+        let straining = controls.auto_level() && self.leveller.straining();
+        self.advise(peak, straining, controls);
         self.shaper.process(frame, controls.clarity());
         heard
     }
@@ -232,9 +236,19 @@ impl VoiceChain {
     /// loud it was. The costly stages rest, so an idle radio doesn't spend
     /// the battery on them.
     pub fn idle(&mut self, frame: &mut [f32], controls: &VoiceControls) -> Level {
+        self.advise(Level::of(frame).peak, false, controls);
         self.cut_lows(frame, controls);
         self.denoiser.process(frame, NoiseSuppression::Off);
         Level::of(frame)
+    }
+
+    fn advise(&mut self, peak: f32, straining: bool, controls: &VoiceControls) {
+        let advice = match self.watch.hear(peak, straining) {
+            MicAdvice::Fine => 0,
+            MicAdvice::TooQuiet => 1,
+            MicAdvice::Clipping => 2,
+        };
+        controls.advice.store(advice, Relaxed);
     }
 
     fn cut_lows(&mut self, frame: &mut [f32], controls: &VoiceControls) {
@@ -314,6 +328,16 @@ mod tests {
         assert_eq!(controls.noise_suppression(), NoiseSuppression::Normal);
         assert!(controls.auto_level());
         assert_eq!(controls.clarity(), Clarity::Normal);
+    }
+
+    #[test]
+    fn a_clipping_microphone_is_noticed_even_while_idle() {
+        let controls = VoiceControls::default();
+        let mut chain = VoiceChain::default();
+        chain.idle(&mut [0.1; FRAME], &controls);
+        assert_eq!(controls.mic_advice(), MicAdvice::Fine);
+        chain.idle(&mut [1.0; FRAME], &controls);
+        assert_eq!(controls.mic_advice(), MicAdvice::Clipping);
     }
 
     #[test]
