@@ -12,6 +12,7 @@ use crossbeam_channel::Receiver;
 
 use takkie_core::dsp::{Level, Tone, apply_gain, mix_into, soft_limit};
 use takkie_core::jitter::{Config, Insert, JitterBuffer, Playout};
+use takkie_core::voice::Leveller;
 use takkie_core::{PeerId, Seq};
 
 use super::codec::{CodecError, VoiceDecoder};
@@ -46,6 +47,7 @@ pub enum MixInput {
 struct Talker {
     jitter: JitterBuffer<Vec<u8>>,
     decoder: VoiceDecoder,
+    leveller: Leveller,
     concealed: u32,
     talking: bool,
     end: Option<Seq>,
@@ -110,6 +112,7 @@ pub struct MixControls {
     muted: AtomicBool,
     half_duplex: AtomicBool,
     beeps: AtomicBool,
+    even_voices: AtomicBool,
     muted_peers: ArcSwap<Vec<PeerId>>,
 }
 
@@ -120,6 +123,7 @@ impl Default for MixControls {
             muted: AtomicBool::new(false),
             half_duplex: AtomicBool::new(true),
             beeps: AtomicBool::new(false),
+            even_voices: AtomicBool::new(true),
             muted_peers: ArcSwap::default(),
         }
     }
@@ -175,6 +179,18 @@ impl MixControls {
     #[must_use]
     pub fn beeps(&self) -> bool {
         self.beeps.load(Relaxed)
+    }
+
+    /// Brings every talker to the same level before mixing, or plays them
+    /// as they were sent. Senders that level their own voice are untouched.
+    pub fn set_even_voices(&self, on: bool) {
+        self.even_voices.store(on, Relaxed);
+    }
+
+    /// Whether talkers are brought to the same level.
+    #[must_use]
+    pub fn even_voices(&self) -> bool {
+        self.even_voices.load(Relaxed)
     }
 
     /// Leaves one sender out of the mix, or puts them back.
@@ -302,6 +318,7 @@ impl Mixer {
             std::collections::hash_map::Entry::Vacant(entry) => entry.insert(Talker {
                 jitter: JitterBuffer::with_config(timing(burst)),
                 decoder: VoiceDecoder::new()?,
+                leveller: Leveller::new(PREFERRED_RATE),
                 concealed: 0,
                 talking: false,
                 end: None,
@@ -362,12 +379,14 @@ impl Mixer {
         let frame = &mut self.frame;
         let counters = &self.counters;
         let muted_peers = self.controls.muted_peers.load();
+        let even_voices = self.controls.even_voices();
         let mut ended = false;
         for (
             id,
             Talker {
                 jitter,
                 decoder,
+                leveller,
                 concealed,
                 talking,
                 end,
@@ -411,6 +430,9 @@ impl Mixer {
             if !played {
                 *talking = false;
             } else if audible {
+                if even_voices {
+                    leveller.process(frame);
+                }
                 mix_into(out, frame);
             }
             if *end == Some(seq) {
@@ -850,6 +872,83 @@ mod tests {
                 .zip(&expected)
                 .all(|(m, e)| (m - e).abs() < 1e-6)
         );
+    }
+
+    // Half a second of tone, half a second of near silence, like words.
+    fn words(amplitude: f32, seconds: usize) -> Vec<Vec<u8>> {
+        let mut encoder = VoiceEncoder::new().unwrap();
+        (0..seconds * 50)
+            .map(|f| {
+                let size = if (f / 25).is_multiple_of(2) {
+                    amplitude
+                } else {
+                    amplitude * 0.01
+                };
+                let frame: Vec<f32> = (0..FRAME)
+                    .map(|i| size * (TAU * 300.0 * (f * FRAME + i) as f32 / 48_000.0).sin())
+                    .collect();
+                encoder.encode(&frame).unwrap().to_vec()
+            })
+            .collect()
+    }
+
+    // The level of the last word each sender spoke, in dB.
+    fn last_word(mixer: &mut Mixer, senders: &[(u64, f32)], seconds: usize) -> f32 {
+        let t0 = Instant::now();
+        let streams: Vec<(u64, Vec<Vec<u8>>)> = senders
+            .iter()
+            .map(|(id, amplitude)| (*id, words(*amplitude, seconds)))
+            .collect();
+        let mut out = vec![0.0; FRAME];
+        let mut heard = Vec::new();
+        for frame in 0..seconds * 50 {
+            let now = t0 + Duration::from_millis(20) * frame as u32;
+            for (id, stream) in &streams {
+                mixer.receive(rx(*id, frame, &stream[frame]), now).unwrap();
+            }
+            mixer.tick(now, &mut out);
+            heard.extend_from_slice(&out);
+        }
+        let word = &heard[heard.len() - FRAME * 45..heard.len() - FRAME * 30];
+        20.0 * rms(word).log10()
+    }
+
+    #[test]
+    fn a_quiet_sender_and_a_loud_one_play_equally_loud() {
+        let quiet = last_word(&mut Mixer::new(), &[(1, 0.02)], 12);
+        let loud = last_word(&mut Mixer::new(), &[(2, 0.5)], 12);
+        assert!(
+            (quiet - loud).abs() < 3.0,
+            "quiet {quiet} dB, loud {loud} dB"
+        );
+        assert!((quiet + 20.0).abs() < 3.0, "{quiet} dB");
+    }
+
+    #[test]
+    fn voices_play_as_sent_when_evening_is_off() {
+        let mut mixer = Mixer::new();
+        mixer.controls().set_even_voices(false);
+        let quiet = last_word(&mut mixer, &[(1, 0.02)], 12);
+        assert!((quiet + 37.0).abs() < 2.0, "{quiet} dB");
+    }
+
+    #[test]
+    fn two_evened_voices_at_full_volume_stay_inside_full_scale() {
+        let mut mixer = Mixer::new();
+        mixer.controls().set_volume(2.0);
+        let t0 = Instant::now();
+        let (a, b) = (words(0.02, 12), words(0.5, 12));
+        let mut out = vec![0.0; FRAME];
+        let mut loudest = 0.0_f32;
+        for frame in 0..a.len() {
+            let now = t0 + Duration::from_millis(20) * frame as u32;
+            mixer.receive(rx(1, frame, &a[frame]), now).unwrap();
+            mixer.receive(rx(2, frame, &b[frame]), now).unwrap();
+            mixer.tick(now, &mut out);
+            loudest = loudest.max(Level::of(&out).peak);
+        }
+        assert!(loudest <= 1.0, "{loudest}");
+        assert!(loudest > 0.3, "{loudest}");
     }
 
     #[test]

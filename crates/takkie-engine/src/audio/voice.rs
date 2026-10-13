@@ -239,6 +239,7 @@ impl VoiceChain {
         self.advise(Level::of(frame).peak, false, controls);
         self.cut_lows(frame, controls);
         self.denoiser.process(frame, NoiseSuppression::Off);
+        self.leveller.rest(frame);
         Level::of(frame)
     }
 

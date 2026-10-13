@@ -86,14 +86,12 @@ fn node(
         },
     )?;
     let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
-    let mix = MixThread::spawn(
-        audio_out,
-        Box::new(speaker.clone()),
-        MixShared {
-            transmitting,
-            ..MixShared::default()
-        },
-    )?;
+    let shared = MixShared {
+        transmitting,
+        ..MixShared::default()
+    };
+    shared.controls.set_even_voices(false);
+    let mix = MixThread::spawn(audio_out, Box::new(speaker.clone()), shared)?;
     let (events, _) = unbounded();
     let table = Peers::new(channel, targets, PEER_TIMEOUT);
     let known = table.view();

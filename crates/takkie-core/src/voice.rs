@@ -61,6 +61,15 @@ impl Leveller {
         self.gain_db >= MOST_GAIN_DB - 1.0
     }
 
+    /// Takes a frame nobody is talking in, to learn how loud the room is
+    /// before the first word.
+    pub fn rest(&mut self, frame: &[f32]) {
+        let rms = Level::of(frame).rms;
+        if rms.is_finite() && !frame.is_empty() {
+            self.hears_speech(rms);
+        }
+    }
+
     /// Levels one frame in place.
     pub fn process(&mut self, frame: &mut [f32]) {
         let level = Level::of(frame);
@@ -327,6 +336,25 @@ mod tests {
         let settled = leveller.gain_db();
         levelled(&mut leveller, talk(1, 0.0005, 0.0005).repeat(20));
         assert_eq!(leveller.gain_db(), settled);
+    }
+
+    #[test]
+    fn knowing_the_room_first_lets_the_first_word_be_levelled() {
+        let word = || tone(300.0, 0.02);
+        let mut cold = Leveller::new(RATE);
+        levelled(&mut cold, word());
+        assert_eq!(
+            cold.gain_db(),
+            0.0,
+            "an unbroken first word looks like background"
+        );
+
+        let mut warm = Leveller::new(RATE);
+        for _ in 0..50 {
+            warm.rest(&[0.0005; FRAME]);
+        }
+        levelled(&mut warm, word());
+        assert!(warm.gain_db() > 5.0, "{}", warm.gain_db());
     }
 
     #[test]

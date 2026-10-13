@@ -76,6 +76,7 @@ fn main() -> ExitCode {
         noise_suppression: current.noise_suppression.into(),
         auto_level: current.auto_level,
         clarity: current.clarity.into(),
+        ..EngineConfig::default()
     }) {
         Ok(started) => started,
         Err(err) => {
