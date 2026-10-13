@@ -86,6 +86,49 @@ impl Biquad {
         }
     }
 
+    /// Lifts (or, with a negative `gain_db`, dips) a band around `centre`
+    /// Hz. A smaller `q` makes the band wider.
+    #[must_use]
+    pub fn peaking(centre: f32, gain_db: f32, q: f32, sample_rate: u32) -> Self {
+        let amount = 10_f64.powf(f64::from(gain_db) / 40.0);
+        let omega = std::f64::consts::TAU * f64::from(centre) / f64::from(sample_rate);
+        let (sin, cos) = omega.sin_cos();
+        let alpha = sin / (2.0 * f64::from(q));
+        let a0 = 1.0 + alpha / amount;
+        Self {
+            b: [
+                (1.0 + alpha * amount) / a0,
+                -2.0 * cos / a0,
+                (1.0 - alpha * amount) / a0,
+            ],
+            a: [-2.0 * cos / a0, (1.0 - alpha / amount) / a0],
+            z: [0.0; 2],
+        }
+    }
+
+    /// Turns everything below about `corner` Hz up or down by `gain_db`.
+    #[must_use]
+    pub fn low_shelf(corner: f32, gain_db: f32, sample_rate: u32) -> Self {
+        let amount = 10_f64.powf(f64::from(gain_db) / 40.0);
+        let omega = std::f64::consts::TAU * f64::from(corner) / f64::from(sample_rate);
+        let (sin, cos) = omega.sin_cos();
+        let slope = 2.0 * amount.sqrt() * sin / std::f64::consts::SQRT_2;
+        let (more, less) = (amount + 1.0, amount - 1.0);
+        let a0 = more + less * cos + slope;
+        Self {
+            b: [
+                amount * (more - less * cos + slope) / a0,
+                2.0 * amount * (less - more * cos) / a0,
+                amount * (more - less * cos - slope) / a0,
+            ],
+            a: [
+                -2.0 * (less + more * cos) / a0,
+                (more + less * cos - slope) / a0,
+            ],
+            z: [0.0; 2],
+        }
+    }
+
     /// Filters `samples` in place.
     pub fn process(&mut self, samples: &mut [f32]) {
         let [b0, b1, b2] = self.b;
@@ -420,6 +463,36 @@ mod tests {
             let out = settled(&mut filter, sine(voice, 0.5));
             assert!((out / rms - 1.0).abs() < 0.02, "{voice} Hz: {out}");
         }
+    }
+
+    fn gain_db(filter: &mut Biquad, frequency: f32) -> f32 {
+        filter.reset();
+        let out = settled(filter, sine(frequency, 0.1));
+        20.0 * (out / (0.1 / 2.0_f32.sqrt())).log10()
+    }
+
+    #[test]
+    fn a_peaking_filter_lifts_its_band_and_leaves_the_rest() {
+        let mut filter = Biquad::peaking(3_000.0, 6.0, 0.8, 48_000);
+        assert!((gain_db(&mut filter, 3_000.0) - 6.0).abs() < 0.1);
+        assert!(gain_db(&mut filter, 200.0).abs() < 0.2);
+        assert!(gain_db(&mut filter, 18_000.0).abs() < 0.8);
+        let edge = gain_db(&mut filter, 1_500.0);
+        assert!((1.0..4.0).contains(&edge), "{edge}");
+    }
+
+    #[test]
+    fn a_low_shelf_turns_the_lows_down_and_leaves_the_rest() {
+        let mut filter = Biquad::low_shelf(250.0, -4.0, 48_000);
+        assert!((gain_db(&mut filter, 60.0) + 4.0).abs() < 0.3);
+        assert!((gain_db(&mut filter, 250.0) + 2.0).abs() < 0.3);
+        assert!(gain_db(&mut filter, 2_000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn a_filter_with_no_gain_changes_nothing_audible() {
+        let mut filter = Biquad::peaking(3_000.0, 0.0, 0.8, 48_000);
+        assert!(gain_db(&mut filter, 3_000.0).abs() < 0.001);
     }
 
     #[test]

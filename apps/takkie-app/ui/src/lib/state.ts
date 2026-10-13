@@ -1,7 +1,7 @@
 // What the screens show, and how engine messages change it. Plain functions
 // with no Svelte or Tauri in them, so they can be tested by themselves.
 
-import type { Access, EngineEvent, Peer, Route, Snapshot } from './engine'
+import type { Access, EngineEvent, MicAdvice, Peer, Route, Snapshot, Strength } from './engine'
 
 export type LogLine = { at: number; text: string }
 
@@ -160,6 +160,30 @@ const ROUTES: Record<Route, string> = {
  * Where sound comes out, in words. A phone reports its route; a computer
  * names the device it opened, without the stream settings in brackets.
  */
+const STRENGTHS: Strength[] = ['off', 'normal', 'strong']
+
+/** The strength after `now`, for a button that steps through them. */
+export function nextStrength(now: Strength): Strength {
+  return STRENGTHS[(STRENGTHS.indexOf(now) + 1) % STRENGTHS.length]
+}
+
+/** A remembered strength, or `null` for anything else that was stored. */
+export function asStrength(stored: string | null): Strength | null {
+  return STRENGTHS.find((strength) => strength === stored) ?? null
+}
+
+/** What to tell the person about their microphone, if anything. */
+export function micWarning(advice: MicAdvice): string | null {
+  switch (advice) {
+    case 'clipping':
+      return 'Microphone too loud: move back a little'
+    case 'quiet':
+      return 'Microphone too quiet: move closer'
+    default:
+      return null
+  }
+}
+
 export function outputLabel(snapshot: Snapshot): string | null {
   if (snapshot.route) {
     return ROUTES[snapshot.route]

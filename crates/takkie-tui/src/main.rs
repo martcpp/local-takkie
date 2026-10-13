@@ -73,6 +73,10 @@ fn main() -> ExitCode {
         static_peers: cli.peers.clone(),
         half_duplex: current.half_duplex,
         beeps: current.beeps,
+        noise_suppression: current.noise_suppression.into(),
+        auto_level: current.auto_level,
+        clarity: current.clarity.into(),
+        ..EngineConfig::default()
     }) {
         Ok(started) => started,
         Err(err) => {
@@ -106,12 +110,18 @@ fn main() -> ExitCode {
     if let Some(note) = settings_note {
         app.note(note);
     }
+    if !current.half_duplex {
+        app.note("🎧 Half-duplex is off: wear headphones, or the others hear themselves back");
+    }
     let result = ui::tui::run(app, &engine, &events, &panel);
 
     if let (Some(_), Some(path)) = (&saved, &settings_path) {
         let last = engine.snapshot();
         current.channel = last.channel.get();
         current.beeps = last.beeps;
+        current.noise_suppression = last.noise_suppression.into();
+        current.auto_level = last.auto_level;
+        current.clarity = last.clarity.into();
         if let Err(err) = settings::save(path, &current) {
             tracing::warn!("settings not saved: {err:#}");
             eprintln!("takkie: settings not saved: {err:#}");

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use takkie_core::ChannelId;
+use takkie_core::voice::Strength;
 
 /// How push-to-talk behaves; used once E9.3 lands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -22,6 +23,36 @@ pub enum PttMode {
     Toggle,
 }
 
+/// How hard a stage of the voice processing works, as the file spells it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Amount {
+    Off,
+    #[default]
+    Normal,
+    Strong,
+}
+
+impl From<Amount> for Strength {
+    fn from(amount: Amount) -> Self {
+        match amount {
+            Amount::Off => Self::Off,
+            Amount::Normal => Self::Normal,
+            Amount::Strong => Self::Strong,
+        }
+    }
+}
+
+impl From<Strength> for Amount {
+    fn from(strength: Strength) -> Self {
+        match strength {
+            Strength::Off => Self::Off,
+            Strength::Normal => Self::Normal,
+            Strength::Strong => Self::Strong,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -32,6 +63,9 @@ pub struct Settings {
     pub ptt_mode: PttMode,
     pub half_duplex: bool,
     pub beeps: bool,
+    pub noise_suppression: Amount,
+    pub auto_level: bool,
+    pub clarity: Amount,
 }
 
 impl Default for Settings {
@@ -44,6 +78,9 @@ impl Default for Settings {
             ptt_mode: PttMode::Auto,
             half_duplex: true,
             beeps: false,
+            noise_suppression: Amount::Normal,
+            auto_level: true,
+            clarity: Amount::Normal,
         }
     }
 }
@@ -126,6 +163,9 @@ mod tests {
             ptt_mode = "toggle"
             half_duplex = false
             beeps = true
+            noise_suppression = "strong"
+            auto_level = false
+            clarity = "off"
         "#;
         assert_eq!(
             parse(text),
@@ -137,6 +177,9 @@ mod tests {
                 ptt_mode: PttMode::Toggle,
                 half_duplex: false,
                 beeps: true,
+                noise_suppression: Amount::Strong,
+                auto_level: false,
+                clarity: Amount::Off,
             })
         );
     }
@@ -148,6 +191,9 @@ mod tests {
         assert_eq!(settings.name, None);
         assert!(settings.half_duplex);
         assert!(!settings.beeps);
+        assert_eq!(settings.noise_suppression, Amount::Normal);
+        assert!(settings.auto_level);
+        assert_eq!(settings.clarity, Amount::Normal);
         assert_eq!(settings.ptt_mode, PttMode::Auto);
     }
 

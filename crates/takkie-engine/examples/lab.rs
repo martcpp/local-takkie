@@ -4,6 +4,8 @@
 //! `cargo run -p takkie-engine --example lab -- send clip.wav heard.wav [--loss PERCENT] [--raw]`
 //!
 //! `--raw` leaves the voice processing out, to compare with and without.
+//! `--noise off|normal|strong` sets the noise suppression, `--level on|off`
+//! the automatic level, `--clarity off|normal|strong` the clarity lift.
 
 use std::error::Error;
 use std::io::{self, Write};
@@ -13,17 +15,18 @@ use std::time::Duration;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use takkie_core::dsp::downmix_to_mono;
-use takkie_engine::Direction;
 use takkie_engine::audio::config::{PREFERRED_RATE, input_config};
 use takkie_engine::audio::devices::find_device;
 use takkie_engine::audio::lab::{Clip, Loss, Report, far_end, frames, process};
 use takkie_engine::audio::stream::CpalSource;
 use takkie_engine::audio::tx::Framer;
-use takkie_engine::audio::voice::VoiceControls;
+use takkie_engine::audio::voice::{NoiseSuppression, VoiceControls};
+use takkie_engine::{Clarity, Direction};
 
 const USAGE: &str = "usage:
   lab record <out.wav> [--seconds N] [--input NAME]
-  lab send <in.wav> <out.wav> [--loss PERCENT] [--raw]";
+  lab send <in.wav> <out.wav> [--loss PERCENT] [--raw] [--noise off|normal|strong] [--level on|off]
+      [--clarity off|normal|strong]";
 
 type Outcome<T> = Result<T, Box<dyn Error>>;
 
@@ -43,7 +46,7 @@ fn run() -> Outcome<()> {
     let mut seconds = 10_u32;
     let mut input = None;
     let mut loss = Loss::default();
-    let mut raw = false;
+    let mut voice = VoiceControls::default();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -53,13 +56,30 @@ fn run() -> Outcome<()> {
                 loss = Loss::percent(value(rest.next(), "--loss")?)
                     .ok_or("--loss is a percentage, 0 to 100")?;
             }
-            "--raw" => raw = true,
+            "--raw" => voice = VoiceControls::raw(),
+            "--noise" => voice.set_noise_suppression(match rest.next().map(String::as_str) {
+                Some("off") => NoiseSuppression::Off,
+                Some("normal") => NoiseSuppression::Normal,
+                Some("strong") => NoiseSuppression::Strong,
+                _ => return Err("--noise is off, normal or strong".into()),
+            }),
+            "--level" => voice.set_auto_level(match rest.next().map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => return Err("--level is on or off".into()),
+            }),
+            "--clarity" => voice.set_clarity(match rest.next().map(String::as_str) {
+                Some("off") => Clarity::Off,
+                Some("normal") => Clarity::Normal,
+                Some("strong") => Clarity::Strong,
+                _ => return Err("--clarity is off, normal or strong".into()),
+            }),
             other => paths.push(other),
         }
     }
     match paths.as_slice() {
         ["record", out] => record(out, seconds, input),
-        ["send", from, to] => send(from, to, loss, raw),
+        ["send", from, to] => send(from, to, loss, &voice),
         _ => Err(USAGE.into()),
     }
 }
@@ -93,13 +113,11 @@ fn record(path: &str, seconds: u32, input: Option<&str>) -> Outcome<()> {
     Ok(())
 }
 
-fn send(from: &str, to: &str, loss: Loss, raw: bool) -> Outcome<()> {
+fn send(from: &str, to: &str, loss: Loss, controls: &VoiceControls) -> Outcome<()> {
     let mut out = io::stdout().lock();
     let mut voice = frames(&mut read_wav(from)?)?;
     writeln!(out, "clip   {}", Report::of(&voice))?;
-    if !raw {
-        process(&mut voice, &VoiceControls::default());
-    }
+    process(&mut voice, controls);
     let heard = far_end(&voice, loss)?;
     write_wav(to, &heard)?;
     writeln!(out, "sent   {}", Report::of(&voice))?;

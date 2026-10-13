@@ -178,9 +178,13 @@ impl TxThread {
                     match framer.next(source.as_mut()) {
                         Ok(Some(samples)) => {
                             heard = Instant::now();
-                            chain.process(samples, &voice);
-                            level.set(Level::of(samples));
-                            let Some(mark) = gate.pass(transmitting.load(Relaxed)) else {
+                            let mark = gate.pass(transmitting.load(Relaxed));
+                            level.set(if mark.is_some() {
+                                chain.process(samples, &voice)
+                            } else {
+                                chain.idle(samples, &voice)
+                            });
+                            let Some(mark) = mark else {
                                 continue;
                             };
                             let event = match encoder.encode(samples) {
@@ -332,7 +336,7 @@ mod tests {
             Box::new(source),
             Arc::clone(&transmitting),
             level,
-            Arc::default(),
+            Arc::new(VoiceControls::raw()),
             sender,
         )
         .unwrap();
@@ -377,7 +381,7 @@ mod tests {
             Box::new(source),
             Arc::new(AtomicBool::new(false)),
             Arc::clone(&level),
-            Arc::default(),
+            Arc::new(VoiceControls::raw()),
             sender,
         )
         .unwrap();
