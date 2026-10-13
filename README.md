@@ -14,7 +14,8 @@ the space bar to talk to everyone else; no internet, server or account needed.
 
 - **The latest stable Rust**, installed with [rustup](https://rustup.rs).
 - **CMake**, because the Opus audio codec is compiled from C source.
-- A microphone, and headphones (there is no echo cancellation yet).
+- A microphone. Headphones help in a loud room; see
+  [Troubleshooting](#troubleshooting) if you hear an echo.
 
 Platform tools:
 
@@ -58,6 +59,9 @@ green dot while they talk. Press `?` in the app for the list of keys:
 | `↑` / `↓` | Pick someone in the peer list |
 | `X` | Mute or unmute the picked person, for you only |
 | `B` | Beeps on or off |
+| `N` | Noise removal: off, normal or strong |
+| `L` | Even out a quiet or loud voice, on or off |
+| `C` | Clarity lift: off, normal or strong |
 | `D` | Show the microphone and speaker in use |
 | `1`–`9`, `0` | Switch to channel 1 to 10 |
 | `P` | Set or clear this channel's passphrase |
@@ -71,6 +75,14 @@ choose one with the digit keys or `--channel`.
 **Beeps.** Press `B` to hear a short tone when someone finishes talking and
 another when you start. They are off by default, your choice is remembered,
 and they are made on your own device, so nobody else hears yours.
+
+**A clear voice.** Before your voice is sent, takkie removes background
+noise, brings a quiet or loud voice to the same level, and lifts the part of
+the voice that carries the words. All three are on by default; `N`, `L` and
+`C` change them, and your choices are remembered. In a loud room, hold the
+microphone close to your mouth or use a headset: no setting makes up for a
+microphone that hears more room than voice. If the levels box says the
+microphone is too loud or too quiet, move back or closer.
 
 **Private channels.** A channel is open by default: anyone on the same
 network can listen and talk. Press `P` and type a passphrase to make it
@@ -108,6 +120,19 @@ port is in the other app's header).
 **No sound.** Run `takkie --list-devices` and pick one with `--input-device`
 or `--output-device`; part of the name is enough. Press `D` in the app to see
 what it's using, and watch the Mic and Speaker meters.
+
+**An echo, or a voice heard twice.** There are three kinds, and each has its
+own fix:
+
+| What you hear | Why | What to do |
+|---|---|---|
+| The voice sounds far away and smeared | The talker's microphone hears the room more than the voice | Hold the microphone close to the mouth, or use a headset. Noise removal softens it, but distance is the cause |
+| A voice twice, a moment apart | You are in the same room as the talker: you hear the person, then the radio | Wear headphones, or mute that person for yourself (`X` in the terminal app, the speaker icon next to their name in the app) |
+| Your own voice comes back to you | The other side plays you on a loudspeaker with `half_duplex = false` in its settings | They switch half-duplex back on, or wear headphones |
+
+Half-duplex, the default, mutes your speaker while you talk, which is what
+keeps a loudspeaker from feeding the microphone. Takkie has no echo
+cancellation.
 
 **It won't start.** It prints one line saying why, for example a port that's
 already in use or no microphone. Warnings and errors also appear in the

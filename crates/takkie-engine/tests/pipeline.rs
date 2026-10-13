@@ -40,6 +40,7 @@ fn run(
     let mut gate = Gate::default();
     let mut encoder = VoiceEncoder::new()?;
     let mut mixer = Mixer::new();
+    mixer.controls().set_even_voices(false);
     let mut pacer = Pacer::new(speaker_rate)?;
     let mut sink = FakeSink::new(speaker_rate, speaker_rate as usize / 5);
 

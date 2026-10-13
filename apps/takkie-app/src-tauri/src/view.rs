@@ -106,6 +106,10 @@ pub struct SnapshotView {
     transmitting: bool,
     muted: bool,
     beeps: bool,
+    noise_suppression: &'static str,
+    auto_level: bool,
+    clarity: &'static str,
+    mic_advice: &'static str,
     volume: f32,
     mic: LevelView,
     speaker: LevelView,
@@ -127,6 +131,10 @@ impl SnapshotView {
             transmitting: snapshot.transmitting,
             muted: snapshot.muted,
             beeps: snapshot.beeps,
+            noise_suppression: snapshot.noise_suppression.name(),
+            auto_level: snapshot.auto_level,
+            clarity: snapshot.clarity.name(),
+            mic_advice: snapshot.mic_advice.name(),
             volume: snapshot.volume,
             mic: snapshot.mic.into(),
             speaker: snapshot.speaker.into(),
@@ -251,7 +259,7 @@ mod tests {
     use std::time::Duration;
 
     use takkie_core::ChannelId;
-    use takkie_engine::EngineStats;
+    use takkie_engine::{EngineStats, MicAdvice, Strength};
 
     use super::*;
 
@@ -276,6 +284,10 @@ mod tests {
             transmitting: false,
             muted: false,
             beeps: true,
+            noise_suppression: Strength::Strong,
+            auto_level: true,
+            clarity: Strength::Off,
+            mic_advice: MicAdvice::Clipping,
             volume: 0.5,
             mic: Level {
                 rms: 0.1,
@@ -313,6 +325,10 @@ mod tests {
         assert_eq!(json["channel"], 4);
         assert_eq!(json["private"], true);
         assert_eq!(json["beeps"], true);
+        assert_eq!(json["noiseSuppression"], "strong");
+        assert_eq!(json["autoLevel"], true);
+        assert_eq!(json["clarity"], "off");
+        assert_eq!(json["micAdvice"], "clipping");
         assert_eq!(json["bufferMs"], 60);
         assert_eq!(json["mic"]["peak"], 0.2_f32);
         let peer = &json["peers"][0];

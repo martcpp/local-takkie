@@ -5,23 +5,23 @@ expression: "screen(&app, &talking_peers())"
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                  🎵  local-takkie   Kitchen   channel 2   port 5000   192.168.1.2                 │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌👥  Peers (2 on your channel, 3 in all)────────────────────┐┌📋  Events Log─────────────────────────┐
-│● Bedroom              ch 2  now                          ││                                      │
-│○ 0000000000000003┌❓  Keys (any key closes)────────────────────────────────────┐                  │
-│○ Office          │ SPACE    talk (hold or toggle, see the footer)             │                  │
-│                  │ T        switch between hold and toggle                    │                  │
-│                  │ M        mute or unmute what you hear                      │                  │
+┌👥  Peers (2 on you┌❓  Keys (any key closes)────────────────────────────────────┐──────────────────┐
+│● Bedroom         │ SPACE    talk (hold or toggle, see the footer)             │                  │
+│○ 0000000000000003│ T        switch between hold and toggle                    │                  │
+│○ Office          │ M        mute or unmute what you hear                      │                  │
 │                  │ + / -    volume up or down                                 │                  │
 │                  │ ↑ / ↓    pick someone in the peer list                     │                  │
 │                  │ X        mute or unmute the picked person                  │                  │
-└──────────────────│ B        beeps on or off (when talk starts and ends)       │                  │
-┌🎤  Push-to-Talk (S│ D        show the microphone and speaker in use            │                  │
-│                🟡 │ 1-9, 0   switch to channel 1 to 10                         │                  │
-└──────────────────│ P        set or clear this channel's passphrase            │                  │
-┌🔊  Levels─────────│ ?        this help                                         │                  │
-│Mic      ░░░░░░░░░│ Q / Esc  quit                                              │                  │
-│Speaker  █████████└────────────────────────────────────────────────────────────┘                  │
-│Buffer  48 ms    Volume  100%    Beeps  off               ││                                      │
+│                  │ B        beeps on or off (when talk starts and ends)       │                  │
+└──────────────────│ N        noise removal: off, normal or strong              │                  │
+┌🎤  Push-to-Talk (S│ L        even out a quiet or loud voice, on or off         │                  │
+│                🟡 │ C        clarity lift: off, normal or strong               │                  │
+└──────────────────│ D        show the microphone and speaker in use            │                  │
+┌🔊  Levels─────────│ 1-9, 0   switch to channel 1 to 10                         │                  │
+│Mic      ░░░░░░░░░│ P        set or clear this channel's passphrase            │                  │
+│Speaker  █████████│ ?        this help                                         │                  │
+│Buffer  48 ms    V│ Q / Esc  quit                                              │                  │
+│Noise   normal    └────────────────────────────────────────────────────────────┘                  │
 └──────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                      SPACE starts and stops talking | ? keys | Q or ESC quit                     │
