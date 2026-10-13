@@ -66,8 +66,9 @@ can talk to any other app on the same channel.
 
 ### Out of scope for v1.0 (possible later)
 
-iOS app, noise suppression, recording, text chat, Bluetooth PTT accessories,
-IPv6-only networks, talking across the internet.
+iOS app, recording, text chat, Bluetooth PTT accessories, IPv6-only networks,
+talking across the internet. (Noise suppression was on this list; it was
+built in E20, see `docs/audio.md`.)
 
 ---
 
@@ -404,7 +405,7 @@ change it.
 | D6 | **ChaCha20-Poly1305 + Argon2id** (RustCrypto) | Fast on phones without AES hardware, misuse-resistant, pure Rust | AES-GCM, PAKE-based key exchange | We need per-user keys or forward secrecy |
 | D7 | **rtrb** ring buffers between audio callbacks and threads | Wait-free SPSC, no allocation | `ringbuf`, mutex + VecDeque (current) | — |
 | D8 | **Custom binary header** instead of bincode/serde | 24 fixed bytes, zero-copy, easy to version and fuzz, language-neutral (Kotlin/Swift could implement it) | bincode, protobuf | The protocol grows complex |
-| D9 | **Half-duplex by default** | Walkie-talkie behaviour, and avoids echo when using speakers (we have no echo cancellation) | Full duplex + echo cancellation (WebRTC APM, C++ build) | Users ask for phone-call style |
+| D9 | **Half-duplex by default** | Walkie-talkie behaviour, and avoids echo when using speakers (we have no echo cancellation) | Full duplex + echo cancellation (WebRTC's, now in pure Rust as `sonora`; tried in E20.10, weak in reverberant rooms, ADR 0015) | Users ask for phone-call style |
 | D10 | **xtask** for dev automation | Cross-platform (works on Windows), plain Rust, no bash needed | Shell scripts (current), `just` | — |
 
 ---
@@ -886,10 +887,30 @@ channels 1–10, with and without a passphrase, including with the screen off.
 | E18.4 | Freeze protocol v1 and finalise `docs/protocol.md` and `docs/security.md`. |
 | E18.5 | CHANGELOG, screenshots, README polish. |
 
+#### E20: Voice clarity · L (added 2026-10-12, out of milestone order at the maintainer's request)
+
+A clear voice in a loud, echoing room. Tracked in epic #346; the result is
+described in `docs/audio.md`.
+
+| ID | Task |
+|---|---|
+| E20.1 | Voice lab: run a recording through the send path and hear the far end. |
+| E20.2 | Voice chain with a low cut. |
+| E20.3 | Noise suppression (RNNoise, ADR 0012). |
+| E20.4 | Automatic level. |
+| E20.5 | Clarity lift. |
+| E20.6 | Opus at 32 kbit/s; optimised audio in debug builds. |
+| E20.7 | Switches in all apps, and microphone warnings. |
+| E20.8 | Every talker played at the same level. |
+| E20.9 | Echo: what causes it and what to do. |
+| E20.10–13 | Spikes: echo cancellation, Android voice input, neural loss hiding, DeepFilterNet (ADRs 0013 to 0016). |
+| E20.14 | Field test in the church. |
+| E20.15 | Docs. |
+
 ### After v1.0 (backlog, not planned yet)
 
-iOS app (see D5 and assumption A1) · noise suppression (`nnnoiseless`) ·
-recording · text messages · Bluetooth PTT accessories · IPv6 · broadcast
+iOS app (see D5 and assumption A1) · a stronger noise remover (ADR 0013) ·
+neural loss hiding in Opus (ADR 0014) · recording · text messages · Bluetooth PTT accessories · IPv6 · broadcast
 discovery fallback · desktop-to-desktop over VPN.
 
 ---
