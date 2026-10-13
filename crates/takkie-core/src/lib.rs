@@ -10,6 +10,7 @@ pub mod protocol;
 pub mod ptt;
 pub mod replay;
 pub mod seal;
+pub mod voice;
 
 pub use ids::{ChannelId, InvalidChannel, PeerId, Seq};
 pub use passphrase::{EmptyPassphrase, Passphrase};

@@ -78,6 +78,8 @@ pub struct EngineConfig {
     pub beeps: bool,
     /// How hard background noise is removed from the microphone.
     pub noise_suppression: NoiseSuppression,
+    /// Bring quiet and loud talkers to the same level.
+    pub auto_level: bool,
 }
 
 impl Default for EngineConfig {
@@ -93,6 +95,7 @@ impl Default for EngineConfig {
             half_duplex: true,
             beeps: false,
             noise_suppression: NoiseSuppression::default(),
+            auto_level: true,
         }
     }
 }
@@ -362,6 +365,7 @@ impl Engine {
         mix.controls.set_beeps(config.beeps);
         let voice = VoiceControls::default();
         voice.set_noise_suppression(config.noise_suppression);
+        voice.set_auto_level(config.auto_level);
 
         let (packets_in, packets) = unbounded();
         let (news_in, news) = unbounded();
@@ -528,6 +532,11 @@ impl Engine {
     /// Sets how hard background noise is removed from the microphone.
     pub fn set_noise_suppression(&self, level: NoiseSuppression) {
         self.shared.voice.set_noise_suppression(level);
+    }
+
+    /// Turns the automatic microphone level on or off.
+    pub fn set_auto_level(&self, on: bool) {
+        self.shared.voice.set_auto_level(on);
     }
 
     /// Turns the start and end beeps on or off.
@@ -850,10 +859,12 @@ mod tests {
         started(network, frequency, config)
     }
 
-    // The fake microphones play tones, which noise suppression removes.
+    // The fake microphones play tones: noise suppression removes them, and
+    // the tests compare levels, which the automatic level changes.
     fn started(network: &MemoryNetwork, frequency: f32, config: EngineConfig) -> Node {
         let config = EngineConfig {
             noise_suppression: NoiseSuppression::Off,
+            auto_level: false,
             ..config
         };
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));

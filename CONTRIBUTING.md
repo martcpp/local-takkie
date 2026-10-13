@@ -128,7 +128,7 @@ cargo run -p takkie-engine --example lab -- send clip.wav lossy.wav --loss 10
 the peak, the average level and the background level, in dB below full
 scale, before and after. With `--loss` the same packets are lost on every
 run, `--raw` leaves the voice processing out, and `--noise off|normal|strong`
-sets the noise suppression. Keep clips out of the repo.
+and `--level on|off` set single stages. Keep clips out of the repo.
 
 ## Checking discovery on a real network
 
