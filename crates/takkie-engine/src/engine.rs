@@ -23,6 +23,7 @@ use crate::audio::session::{
 };
 use crate::audio::stream::Counters;
 use crate::audio::tx::LevelMeter;
+use crate::audio::voice::{NoiseSuppression, VoiceControls};
 use crate::net::discovery::{Announcement, Browser, Discovery, DiscoveryError};
 use crate::net::hello::{HELLO_EVERY, HelloThread};
 use crate::net::peers::{PEER_TIMEOUT, PeerOutputs, PeerThread, Peers};
@@ -75,6 +76,8 @@ pub struct EngineConfig {
     pub half_duplex: bool,
     /// Beep when someone finishes talking and when we start.
     pub beeps: bool,
+    /// How hard background noise is removed from the microphone.
+    pub noise_suppression: NoiseSuppression,
 }
 
 impl Default for EngineConfig {
@@ -89,6 +92,7 @@ impl Default for EngineConfig {
             static_peers: Vec::new(),
             half_duplex: true,
             beeps: false,
+            noise_suppression: NoiseSuppression::default(),
         }
     }
 }
@@ -252,6 +256,7 @@ struct Shared {
     key: Arc<ArcSwapOption<ChannelKey>>,
     transmitting: Arc<AtomicBool>,
     level: Arc<LevelMeter>,
+    voice: Arc<VoiceControls>,
     mix: MixShared,
     peers: Arc<ArcSwap<Vec<Peer>>>,
     sent: Arc<SendCounters>,
@@ -355,6 +360,8 @@ impl Engine {
         };
         mix.controls.set_half_duplex(config.half_duplex);
         mix.controls.set_beeps(config.beeps);
+        let voice = VoiceControls::default();
+        voice.set_noise_suppression(config.noise_suppression);
 
         let (packets_in, packets) = unbounded();
         let (news_in, news) = unbounded();
@@ -397,6 +404,7 @@ impl Engine {
             key,
             transmitting,
             level,
+            voice: Arc::new(voice),
             mix,
             peers: peer_view,
             sent: sender.counters(),
@@ -412,7 +420,7 @@ impl Engine {
             Wiring {
                 transmitting: Arc::clone(&shared.transmitting),
                 level: Arc::clone(&shared.level),
-                voice: Arc::default(),
+                voice: Arc::clone(&shared.voice),
                 tx_events,
                 packets,
                 mix: shared.mix.clone(),
@@ -515,6 +523,11 @@ impl Engine {
     /// Silences one peer for us only, until they or we restart.
     pub fn set_peer_muted(&self, peer: PeerId, muted: bool) {
         self.shared.mix.controls.set_peer_muted(peer, muted);
+    }
+
+    /// Sets how hard background noise is removed from the microphone.
+    pub fn set_noise_suppression(&self, level: NoiseSuppression) {
+        self.shared.voice.set_noise_suppression(level);
     }
 
     /// Turns the start and end beeps on or off.
@@ -837,7 +850,12 @@ mod tests {
         started(network, frequency, config)
     }
 
+    // The fake microphones play tones, which noise suppression removes.
     fn started(network: &MemoryNetwork, frequency: f32, config: EngineConfig) -> Node {
+        let config = EngineConfig {
+            noise_suppression: NoiseSuppression::Off,
+            ..config
+        };
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
         let transport = Arc::new(network.bind(0));
         let addr = transport.local_addr();

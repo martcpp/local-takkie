@@ -73,6 +73,7 @@ fn main() -> ExitCode {
         static_peers: cli.peers.clone(),
         half_duplex: current.half_duplex,
         beeps: current.beeps,
+        ..EngineConfig::default()
     }) {
         Ok(started) => started,
         Err(err) => {
