@@ -21,6 +21,7 @@ and what would make us change our minds. The summary table is in
 | [0013](0013-deepfilternet-not-yet.md) | DeepFilterNet is better in loud rooms but is not adopted yet | Accepted |
 | [0014](0014-deep-plc-after-field-data.md) | Opus's neural loss hiding helps with bursts; decided after field data | Accepted |
 | [0015](0015-no-echo-cancellation-for-now.md) | Echo cancellation is possible in pure Rust, and still not built | Accepted |
+| [0016](0016-our-own-voice-processing-on-android.md) | On Android, our own voice processing, not the phone's | Accepted |
 
 To add one, copy [0000-template.md](0000-template.md), take the next number,
 and add a row here.
