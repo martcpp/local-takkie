@@ -1,14 +1,17 @@
 <script lang="ts">
   import type { Snapshot } from './engine'
-  import { meter, outputLabel } from './state'
+  import { meter, micWarning, nextStrength, outputLabel } from './state'
   import {
     headset,
     onPhone,
     screen,
+    setAutoLevel,
     setBeeps,
+    setClarity,
     setHeadsetButton,
     setKeepScreenOn,
     setMuted,
+    setNoiseSuppression,
     setVolume,
   } from './store.svelte'
 
@@ -16,6 +19,7 @@
 
   const percent = $derived(Math.round(snapshot.volume * 100))
   const output = $derived(outputLabel(snapshot))
+  const warning = $derived(micWarning(snapshot.micAdvice))
 </script>
 
 <section aria-labelledby="levels-title">
@@ -28,6 +32,7 @@
     <span>Speaker</span>
     <meter class="speaker" min="0" max="1" value={meter(snapshot.speaker.peak)}></meter>
   </div>
+  {#if warning}<p class="warning" role="status">⚠️ {warning}</p>{/if}
   <label class="volume">
     <span>Volume</span>
     <input
@@ -66,6 +71,43 @@
     {/if}
     <span class="buffer">Buffer {snapshot.bufferMs} ms</span>
   </div>
+  <div class="switches" role="group" aria-label="Your voice">
+    <button
+      class:on={snapshot.noiseSuppression !== 'off'}
+      title="Removes background noise from your microphone"
+      onclick={() => setNoiseSuppression(nextStrength(snapshot.noiseSuppression))}
+    >
+      🧹 Noise removal: {snapshot.noiseSuppression}
+    </button>
+    <button
+      aria-pressed={snapshot.autoLevel}
+      class:on={snapshot.autoLevel}
+      title="Brings a quiet or loud voice to the same level"
+      onclick={() => setAutoLevel(!snapshot.autoLevel)}
+    >
+      {snapshot.autoLevel ? '🎚️ Even volume on' : '🎚️ Even volume off'}
+    </button>
+    <button
+      class:on={snapshot.clarity !== 'off'}
+      title="Lifts the part of your voice that carries the words"
+      onclick={() => setClarity(nextStrength(snapshot.clarity))}
+    >
+      ✨ Clarity: {snapshot.clarity}
+    </button>
+  </div>
+  <details class="echo">
+    <summary>Hearing an echo?</summary>
+    <ul>
+      <li>
+        <strong>A voice sounds far away:</strong> the talker should hold the microphone close to
+        their mouth, or use a headset.
+      </li>
+      <li>
+        <strong>A voice twice, a moment apart:</strong> you are in the same room as the talker.
+        Wear headphones, or mute that person in the list.
+      </li>
+    </ul>
+  </details>
 </section>
 
 <style>
@@ -85,6 +127,34 @@
   meter {
     width: 100%;
     height: 0.75rem;
+  }
+
+  .warning {
+    margin: 0.375rem 0 0;
+    color: var(--warning, #b45309);
+    font-size: 0.875rem;
+  }
+
+  .echo {
+    margin-top: 0.625rem;
+    color: var(--muted);
+    font-size: 0.875rem;
+  }
+
+  .echo summary {
+    cursor: pointer;
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+  }
+
+  .echo ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1.125rem;
+  }
+
+  .echo li + li {
+    margin-top: 0.375rem;
   }
 
   .volume {

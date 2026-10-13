@@ -17,6 +17,9 @@ and what would make us change our minds. The summary table is in
 | [0009](0009-half-duplex-by-default.md) | Half-duplex by default | Accepted |
 | [0010](0010-xtask-for-dev-automation.md) | cargo xtask for dev automation | Accepted, done in #41 |
 | [0011](0011-android-feasibility.md) | Android is feasible with Tauri, cpal, Opus and mdns-sd | Accepted |
+| [0012](0012-rnnoise-for-noise-suppression.md) | RNNoise (`nnnoiseless`) for noise suppression | Accepted |
+| [0013](0013-deepfilternet-not-yet.md) | DeepFilterNet is better in loud rooms but is not adopted yet | Accepted |
+| [0014](0014-deep-plc-after-field-data.md) | Opus's neural loss hiding helps with bursts; decided after field data | Accepted |
 
 To add one, copy [0000-template.md](0000-template.md), take the next number,
 and add a row here.

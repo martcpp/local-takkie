@@ -1,8 +1,12 @@
 //! Opus with the settings from ROADMAP 3.4: mono, 48 kHz, 20 ms frames,
-//! VoIP mode, 24 kbit/s, in-band FEC for 10% expected loss.
+//! VoIP mode, 32 kbit/s, in-band FEC for 10% expected loss.
 
-use opus::{Application, Bitrate, Channels, Decoder, Encoder};
+use opus::{Application, Bitrate, Channels, Decoder, Encoder, Signal};
 use thiserror::Error;
+
+// With FEC on, 24 kbit/s only buys 8 kHz of sound. This is the lowest
+// rate where Opus keeps the whole voice, up to 20 kHz.
+const BITRATE: i32 = 32_000;
 
 /// Opus's largest packet.
 const MAX_PACKET: usize = 1275;
@@ -25,7 +29,9 @@ impl VoiceEncoder {
     /// [`CodecError`] if libopus rejects a setting.
     pub fn new() -> Result<Self, CodecError> {
         let mut inner = Encoder::new(48_000, Channels::Mono, Application::Voip)?;
-        inner.set_bitrate(Bitrate::Bits(24_000))?;
+        inner.set_bitrate(Bitrate::Bits(BITRATE))?;
+        inner.set_signal(Signal::Voice)?;
+        inner.set_complexity(9)?;
         inner.set_inband_fec(true)?;
         inner.set_packet_loss_perc(10)?;
         Ok(Self {
@@ -93,7 +99,7 @@ mod tests {
     use crate::audio::resample::FRAME;
 
     #[test]
-    fn a_second_of_speech_like_tone_averages_about_60_bytes() {
+    fn a_second_of_speech_like_tone_averages_about_80_bytes() {
         let mut encoder = VoiceEncoder::new().unwrap();
         let mut total = 0;
         for f in 0..50 {
@@ -106,7 +112,38 @@ mod tests {
             total += encoder.encode(&frame).unwrap().len();
         }
         let average = total / 50;
-        assert!((40..=80).contains(&average), "{average} bytes per packet");
+        assert!((60..=100).contains(&average), "{average} bytes per packet");
+    }
+
+    #[test]
+    fn the_whole_voice_is_sent_not_just_the_lower_half() {
+        let mut encoder = VoiceEncoder::new().unwrap();
+        let mut seed = 0x1234_5678_u32;
+        let mut narrow = 0;
+        for f in 0..100 {
+            let frame: Vec<f32> = (0..FRAME)
+                .map(|i| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    let hiss = (seed as f32 / u32::MAX as f32 - 0.5) * 0.05;
+                    let t = (f * FRAME + i) as f32 / 48_000.0;
+                    0.2 * (TAU * 180.0 * t).sin() + 0.1 * (TAU * 2_400.0 * t).sin() + hiss
+                })
+                .collect();
+            let packet = encoder.encode(&frame).unwrap();
+            let width = opus::packet::get_bandwidth(packet).unwrap();
+            if !matches!(
+                width,
+                opus::Bandwidth::Fullband | opus::Bandwidth::Superwideband
+            ) {
+                narrow += 1;
+            }
+        }
+        assert!(
+            narrow < 5,
+            "{narrow} of 100 packets were cut to 8 kHz or less"
+        );
     }
 
     #[test]

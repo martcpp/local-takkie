@@ -23,6 +23,7 @@ use crate::audio::session::{
 };
 use crate::audio::stream::Counters;
 use crate::audio::tx::LevelMeter;
+use crate::audio::voice::{NoiseSuppression, VoiceControls};
 use crate::net::discovery::{Announcement, Browser, Discovery, DiscoveryError};
 use crate::net::hello::{HELLO_EVERY, HelloThread};
 use crate::net::peers::{PEER_TIMEOUT, PeerOutputs, PeerThread, Peers};
@@ -30,6 +31,7 @@ use crate::net::rx::{RxCounters, RxOutputs, RxThread};
 use crate::net::send::{PacketSender, SendCounters, SendThread};
 use crate::net::{Transport, UdpTransport};
 use crate::threads::{STOP_WITHIN, join_within};
+use takkie_core::voice::{Clarity, MicAdvice};
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
 // Often enough that a newcomer finds a sleeping phone within a few seconds.
@@ -75,6 +77,15 @@ pub struct EngineConfig {
     pub half_duplex: bool,
     /// Beep when someone finishes talking and when we start.
     pub beeps: bool,
+    /// How hard background noise is removed from the microphone.
+    pub noise_suppression: NoiseSuppression,
+    /// Bring quiet and loud talkers to the same level.
+    pub auto_level: bool,
+    /// How much the part of the voice that carries words is lifted.
+    pub clarity: Clarity,
+    /// Bring everyone we hear to the same level. It leaves senders that
+    /// already level their own voice alone.
+    pub even_voices: bool,
 }
 
 impl Default for EngineConfig {
@@ -89,6 +100,10 @@ impl Default for EngineConfig {
             static_peers: Vec::new(),
             half_duplex: true,
             beeps: false,
+            noise_suppression: NoiseSuppression::default(),
+            auto_level: true,
+            clarity: Clarity::default(),
+            even_voices: true,
         }
     }
 }
@@ -218,6 +233,14 @@ pub struct EngineSnapshot {
     pub muted: bool,
     /// The start and end beeps are on.
     pub beeps: bool,
+    /// How hard background noise is removed from the microphone.
+    pub noise_suppression: NoiseSuppression,
+    /// Quiet and loud talkers are brought to the same level.
+    pub auto_level: bool,
+    /// How much the part of the voice that carries words is lifted.
+    pub clarity: Clarity,
+    /// Something about the microphone the person should know.
+    pub mic_advice: MicAdvice,
     /// Playback volume.
     pub volume: f32,
     /// The latest mic level.
@@ -252,6 +275,7 @@ struct Shared {
     key: Arc<ArcSwapOption<ChannelKey>>,
     transmitting: Arc<AtomicBool>,
     level: Arc<LevelMeter>,
+    voice: Arc<VoiceControls>,
     mix: MixShared,
     peers: Arc<ArcSwap<Vec<Peer>>>,
     sent: Arc<SendCounters>,
@@ -355,6 +379,11 @@ impl Engine {
         };
         mix.controls.set_half_duplex(config.half_duplex);
         mix.controls.set_beeps(config.beeps);
+        mix.controls.set_even_voices(config.even_voices);
+        let voice = VoiceControls::default();
+        voice.set_noise_suppression(config.noise_suppression);
+        voice.set_auto_level(config.auto_level);
+        voice.set_clarity(config.clarity);
 
         let (packets_in, packets) = unbounded();
         let (news_in, news) = unbounded();
@@ -397,6 +426,7 @@ impl Engine {
             key,
             transmitting,
             level,
+            voice: Arc::new(voice),
             mix,
             peers: peer_view,
             sent: sender.counters(),
@@ -412,7 +442,7 @@ impl Engine {
             Wiring {
                 transmitting: Arc::clone(&shared.transmitting),
                 level: Arc::clone(&shared.level),
-                voice: Arc::default(),
+                voice: Arc::clone(&shared.voice),
                 tx_events,
                 packets,
                 mix: shared.mix.clone(),
@@ -517,6 +547,21 @@ impl Engine {
         self.shared.mix.controls.set_peer_muted(peer, muted);
     }
 
+    /// Sets how hard background noise is removed from the microphone.
+    pub fn set_noise_suppression(&self, level: NoiseSuppression) {
+        self.shared.voice.set_noise_suppression(level);
+    }
+
+    /// Turns the automatic microphone level on or off.
+    pub fn set_auto_level(&self, on: bool) {
+        self.shared.voice.set_auto_level(on);
+    }
+
+    /// Sets how much the part of the voice that carries words is lifted.
+    pub fn set_clarity(&self, clarity: Clarity) {
+        self.shared.voice.set_clarity(clarity);
+    }
+
     /// Turns the start and end beeps on or off.
     pub fn set_beeps(&self, on: bool) {
         self.shared.mix.controls.set_beeps(on);
@@ -550,6 +595,10 @@ impl Engine {
             transmitting: shared.transmitting.load(Relaxed),
             muted: shared.mix.controls.is_muted(),
             beeps: shared.mix.controls.beeps(),
+            noise_suppression: shared.voice.noise_suppression(),
+            auto_level: shared.voice.auto_level(),
+            clarity: shared.voice.clarity(),
+            mic_advice: shared.voice.mic_advice(),
             volume: shared.mix.controls.volume(),
             mic: shared.level.get(),
             speaker: shared.mix.level.get(),
@@ -837,7 +886,16 @@ mod tests {
         started(network, frequency, config)
     }
 
+    // The fake microphones play tones: noise suppression removes them, and
+    // the tests compare levels, which the automatic level changes.
     fn started(network: &MemoryNetwork, frequency: f32, config: EngineConfig) -> Node {
+        let config = EngineConfig {
+            noise_suppression: NoiseSuppression::Off,
+            auto_level: false,
+            clarity: Clarity::Off,
+            even_voices: false,
+            ..config
+        };
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
         let transport = Arc::new(network.bind(0));
         let addr = transport.local_addr();
@@ -1083,6 +1141,19 @@ mod tests {
 
         c.engine.set_beeps(true);
         assert!(c.engine.snapshot().beeps);
+
+        let before = c.engine.snapshot();
+        assert_eq!(before.noise_suppression, NoiseSuppression::Off);
+        assert!(!before.auto_level);
+        assert_eq!(before.clarity, Clarity::Off);
+        assert_eq!(before.mic_advice, MicAdvice::Fine);
+        c.engine.set_noise_suppression(NoiseSuppression::Strong);
+        c.engine.set_auto_level(true);
+        c.engine.set_clarity(Clarity::Normal);
+        let after = c.engine.snapshot();
+        assert_eq!(after.noise_suppression, NoiseSuppression::Strong);
+        assert!(after.auto_level);
+        assert_eq!(after.clarity, Clarity::Normal);
         a.engine.set_transmitting(true);
         wait_for(&c.events, |e| *e == started);
         a.engine.set_transmitting(false);

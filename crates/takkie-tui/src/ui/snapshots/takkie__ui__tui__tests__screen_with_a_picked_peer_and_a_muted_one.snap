@@ -13,7 +13,6 @@ expression: "screen(&app, &state)"
 │                                                          ││                                      │
 │                                                          ││                                      │
 │                                                          ││                                      │
-│                                                          ││                                      │
 └──────────────────────────────────────────────────────────┘│                                      │
 ┌🎤  Push-to-Talk (SPACE starts and stops talking)──────────┐│                                      │
 │                🟡  BUSY: Bedroom is talking               ││                                      │
@@ -22,6 +21,7 @@ expression: "screen(&app, &state)"
 │Mic      ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░││                                      │
 │Speaker  ████████████████████████████████████████░░░░░░░░░││                                      │
 │Buffer  48 ms    Volume  100%    Beeps  off               ││                                      │
+│Noise   normal    Even  on    Clarity  normal             ││                                      │
 └──────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                      SPACE starts and stops talking | ? keys | Q or ESC quit                     │
