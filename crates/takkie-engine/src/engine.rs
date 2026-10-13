@@ -83,6 +83,9 @@ pub struct EngineConfig {
     pub auto_level: bool,
     /// How much the part of the voice that carries words is lifted.
     pub clarity: Clarity,
+    /// Bring everyone we hear to the same level. It leaves senders that
+    /// already level their own voice alone.
+    pub even_voices: bool,
 }
 
 impl Default for EngineConfig {
@@ -100,6 +103,7 @@ impl Default for EngineConfig {
             noise_suppression: NoiseSuppression::default(),
             auto_level: true,
             clarity: Clarity::default(),
+            even_voices: true,
         }
     }
 }
@@ -375,6 +379,7 @@ impl Engine {
         };
         mix.controls.set_half_duplex(config.half_duplex);
         mix.controls.set_beeps(config.beeps);
+        mix.controls.set_even_voices(config.even_voices);
         let voice = VoiceControls::default();
         voice.set_noise_suppression(config.noise_suppression);
         voice.set_auto_level(config.auto_level);
@@ -888,6 +893,7 @@ mod tests {
             noise_suppression: NoiseSuppression::Off,
             auto_level: false,
             clarity: Clarity::Off,
+            even_voices: false,
             ..config
         };
         let speaker = LiveSink::new(FakeSink::new(RATE, RATE as usize / 5));
