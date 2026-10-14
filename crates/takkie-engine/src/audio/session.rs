@@ -338,6 +338,7 @@ fn spawn_tx(
         Arc::clone(&wiring.transmitting),
         Arc::clone(&wiring.level),
         Arc::clone(&wiring.voice),
+        Arc::clone(&wiring.mix.tap),
         wiring.tx_events.clone(),
     )?;
     events.extend(opened.warning.map(AudioEvent::Warning));

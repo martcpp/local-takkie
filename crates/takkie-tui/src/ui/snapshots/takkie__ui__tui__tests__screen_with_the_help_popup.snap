@@ -16,13 +16,13 @@ expression: "screen(&app, &talking_peers())"
 └──────────────────│ N        noise removal: off, normal or strong              │                  │
 ┌🎤  Push-to-Talk (S│ L        even out a quiet or loud voice, on or off         │                  │
 │                🟡 │ C        clarity lift: off, normal or strong               │                  │
-└──────────────────│ D        show the microphone and speaker in use            │                  │
-┌🔊  Levels─────────│ 1-9, 0   switch to channel 1 to 10                         │                  │
-│Mic      ░░░░░░░░░│ P        set or clear this channel's passphrase            │                  │
-│Speaker  █████████│ ?        this help                                         │                  │
-│Buffer  48 ms    V│ Q / Esc  quit                                              │                  │
-│Noise   normal    └────────────────────────────────────────────────────────────┘                  │
-└──────────────────────────────────────────────────────────┘└──────────────────────────────────────┘
+└──────────────────│ R        don't play people in the same room, on or off     │                  │
+┌🔊  Levels─────────│ D        show the microphone and speaker in use            │                  │
+│Mic      ░░░░░░░░░│ 1-9, 0   switch to channel 1 to 10                         │                  │
+│Speaker  █████████│ P        set or clear this channel's passphrase            │                  │
+│Buffer  48 ms    V│ ?        this help                                         │                  │
+│Noise   normal    │ Q / Esc  quit                                              │                  │
+└──────────────────└────────────────────────────────────────────────────────────┘──────────────────┘
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                      SPACE starts and stops talking | ? keys | Q or ESC quit                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘

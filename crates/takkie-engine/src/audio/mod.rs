@@ -4,6 +4,8 @@ pub mod codec;
 pub mod config;
 /// Device listing.
 pub mod devices;
+/// Noticing a talker in the same room.
+pub mod earshot;
 /// Fake devices for tests.
 pub mod fake;
 /// The hardware boundary.

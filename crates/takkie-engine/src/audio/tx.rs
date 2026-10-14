@@ -10,6 +10,7 @@ use crossbeam_channel::Sender;
 use takkie_core::dsp::Level;
 
 use super::codec::{CodecError, VoiceEncoder};
+use super::earshot::MicTap;
 use super::io::AudioSource;
 use super::resample::{FRAME, ResampleError, Resampler};
 use super::voice::{VoiceChain, VoiceControls};
@@ -161,6 +162,7 @@ impl TxThread {
         transmitting: Arc<AtomicBool>,
         level: Arc<LevelMeter>,
         voice: Arc<VoiceControls>,
+        tap: Arc<MicTap>,
         events: Sender<TxEvent>,
     ) -> Result<Self, TxError> {
         let mut framer = Framer::new(source.sample_rate())?;
@@ -178,6 +180,7 @@ impl TxThread {
                     match framer.next(source.as_mut()) {
                         Ok(Some(samples)) => {
                             heard = Instant::now();
+                            tap.push(samples, heard);
                             let mark = gate.pass(transmitting.load(Relaxed));
                             level.set(if mark.is_some() {
                                 chain.process(samples, &voice)
@@ -337,6 +340,7 @@ mod tests {
             Arc::clone(&transmitting),
             level,
             Arc::new(VoiceControls::raw()),
+            Arc::default(),
             sender,
         )
         .unwrap();
@@ -382,6 +386,7 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             Arc::clone(&level),
             Arc::new(VoiceControls::raw()),
+            Arc::default(),
             sender,
         )
         .unwrap();

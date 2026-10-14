@@ -30,6 +30,7 @@ const peer = (id: string, name: string, channel = 2, extra: Partial<Peer> = {}):
   talking: false,
   seenMs: 0,
   mismatch: false,
+  nearby: false,
   muted: false,
   ...extra,
 })
@@ -45,6 +46,7 @@ const snapshot = (peers: Peer[] = []): Snapshot => ({
   autoLevel: true,
   clarity: 'normal',
   micAdvice: 'fine',
+  muteNearby: true,
   volume: 1,
   mic: { rms: 0, peak: 0 },
   speaker: { rms: 0, peak: 0 },

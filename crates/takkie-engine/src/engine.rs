@@ -86,6 +86,9 @@ pub struct EngineConfig {
     /// Bring everyone we hear to the same level. It leaves senders that
     /// already level their own voice alone.
     pub even_voices: bool,
+    /// Don't play a talker who is in the same room: the people here hear
+    /// them already, and playing them too makes an echo.
+    pub mute_nearby: bool,
 }
 
 impl Default for EngineConfig {
@@ -104,6 +107,7 @@ impl Default for EngineConfig {
             auto_level: true,
             clarity: Clarity::default(),
             even_voices: false,
+            mute_nearby: true,
         }
     }
 }
@@ -157,6 +161,9 @@ pub struct PeerInfo {
     pub mismatch: bool,
     /// We chose not to hear them.
     pub muted: bool,
+    /// Their voice reaches our microphone through the air: they are in the
+    /// same room.
+    pub nearby: bool,
 }
 
 /// Something the UI should react to.
@@ -241,6 +248,8 @@ pub struct EngineSnapshot {
     pub clarity: Clarity,
     /// Something about the microphone the person should know.
     pub mic_advice: MicAdvice,
+    /// Talkers in the same room aren't played.
+    pub mute_nearby: bool,
     /// Playback volume.
     pub volume: f32,
     /// The latest mic level.
@@ -296,6 +305,7 @@ impl Shared {
             last_seen: peer.last_seen,
             mismatch: self.mismatched.load().contains(&peer.id),
             muted: self.mix.controls.is_peer_muted(peer.id),
+            nearby: self.mix.nearby.load().contains(&peer.id),
         }
     }
 
@@ -380,6 +390,7 @@ impl Engine {
         mix.controls.set_half_duplex(config.half_duplex);
         mix.controls.set_beeps(config.beeps);
         mix.controls.set_even_voices(config.even_voices);
+        mix.controls.set_mute_nearby(config.mute_nearby);
         let voice = VoiceControls::default();
         voice.set_noise_suppression(config.noise_suppression);
         voice.set_auto_level(config.auto_level);
@@ -562,6 +573,11 @@ impl Engine {
         self.shared.voice.set_clarity(clarity);
     }
 
+    /// Stops playing talkers who are in the same room, or plays everyone.
+    pub fn set_mute_nearby(&self, on: bool) {
+        self.shared.mix.controls.set_mute_nearby(on);
+    }
+
     /// Turns the start and end beeps on or off.
     pub fn set_beeps(&self, on: bool) {
         self.shared.mix.controls.set_beeps(on);
@@ -599,6 +615,7 @@ impl Engine {
             auto_level: shared.voice.auto_level(),
             clarity: shared.voice.clarity(),
             mic_advice: shared.voice.mic_advice(),
+            mute_nearby: shared.mix.controls.mute_nearby(),
             volume: shared.mix.controls.volume(),
             mic: shared.level.get(),
             speaker: shared.mix.level.get(),
