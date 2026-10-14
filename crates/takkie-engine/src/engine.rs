@@ -103,7 +103,7 @@ impl Default for EngineConfig {
             noise_suppression: NoiseSuppression::default(),
             auto_level: true,
             clarity: Clarity::default(),
-            even_voices: true,
+            even_voices: false,
         }
     }
 }
