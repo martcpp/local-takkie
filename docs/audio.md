@@ -18,7 +18,7 @@ stages without dependencies are in `crates/takkie-core`.
 | 1 | Low cut | Removes everything below 100 Hz: rumble, handling noise, mains hum. A voice has nothing there | Always on |
 | 2 | Noise removal | RNNoise pushes down what isn't a voice. Normal keeps 15% of the microphone so it sounds natural; strong keeps none. Adds 10 ms of delay | Off, normal (default), strong |
 | 3 | Level meter | Measured here, so the meter shows your microphone, not the evened-out result | |
-| 4 | Even volume | Brings a quiet or loud voice to about -20 dB. It only listens while you speak, so pauses aren't turned up. At most +30 dB, at least -15 dB | On (default), off |
+| 4 | Even volume | Brings a quiet or loud voice to about -20 dB. It only listens while you speak, so pauses aren't turned up, and a sound 10 dB under the voice (an echo of another speaker) is only followed if it lasts 3 s. At most +20 dB, at least -15 dB | On (default), off |
 | 5 | Clarity | Lifts the band around 3 kHz, where consonants are, and thins everything below 250 Hz. Normal: +4 and -3 dB. Strong: +7 and -5 dB. A soft limiter follows | Off, normal (default), strong |
 | 6 | Opus | 32 kbit/s, voice mode, with error correction for 10% loss. 32 is the lowest rate at which Opus sends the whole voice (to 20 kHz); at 24 it sends half | Fixed |
 
@@ -32,7 +32,7 @@ buttons under Sound in the desktop and phone app. They are remembered.
 
 - **Too loud:** the microphone hit full scale. Nothing after that point can
   repair it. Move back, or turn the input down in your system's settings.
-- **Too quiet:** even volume has used all of its +30 dB. Move closer.
+- **Too quiet:** even volume has used all of its +20 dB. Move closer.
 
 Each warning stays for two seconds after its cause.
 
@@ -44,7 +44,7 @@ Per talker, in the mixer (`crates/takkie-engine/src/audio/mix.rs`):
 |---|---|---|
 | 1 | Jitter buffer | Holds packets about 60 ms to put them in order |
 | 2 | Opus decoder | A lost packet is rebuilt from the next one's error correction, or guessed when that is lost too |
-| 3 | Even voices | The same leveller as on the sending side. It does nothing to a sender that already evens its own voice; it is for people on an older version |
+| 3 | Even voices | The same leveller as on the sending side, for people on an older version. Off by default: with two devices in one room it can turn up the other speaker's echo |
 | 4 | Mix | All talkers are added together |
 | 5 | Volume | 0 to 200% |
 | 6 | Beeps and limiter | The limiter keeps two loud talkers, or 200%, inside full scale |
