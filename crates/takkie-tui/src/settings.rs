@@ -66,6 +66,7 @@ pub struct Settings {
     pub noise_suppression: Amount,
     pub auto_level: bool,
     pub clarity: Amount,
+    pub mute_nearby: bool,
 }
 
 impl Default for Settings {
@@ -81,6 +82,7 @@ impl Default for Settings {
             noise_suppression: Amount::Normal,
             auto_level: true,
             clarity: Amount::Normal,
+            mute_nearby: true,
         }
     }
 }
@@ -166,6 +168,7 @@ mod tests {
             noise_suppression = "strong"
             auto_level = false
             clarity = "off"
+            mute_nearby = false
         "#;
         assert_eq!(
             parse(text),
@@ -180,6 +183,7 @@ mod tests {
                 noise_suppression: Amount::Strong,
                 auto_level: false,
                 clarity: Amount::Off,
+                mute_nearby: false,
             })
         );
     }
@@ -194,6 +198,7 @@ mod tests {
         assert_eq!(settings.noise_suppression, Amount::Normal);
         assert!(settings.auto_level);
         assert_eq!(settings.clarity, Amount::Normal);
+        assert!(settings.mute_nearby);
         assert_eq!(settings.ptt_mode, PttMode::Auto);
     }
 

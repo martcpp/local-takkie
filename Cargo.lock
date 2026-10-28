@@ -4715,6 +4715,7 @@ dependencies = [
  "mdns-sd",
  "nnnoiseless",
  "opus",
+ "realfft",
  "rtrb",
  "rubato",
  "socket2",

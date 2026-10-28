@@ -270,6 +270,11 @@ pub fn set_clarity(radio: State<'_, Radio>, level: &str) -> Result<(), String> {
     radio.with(|engine| engine.set_clarity(level))
 }
 
+#[tauri::command]
+pub fn set_mute_nearby(radio: State<'_, Radio>, on: bool) -> Result<(), String> {
+    radio.with(|engine| engine.set_mute_nearby(on))
+}
+
 #[tauri::command(async)]
 pub fn list_devices() -> Result<DevicesView, String> {
     let devices = Engine::list_devices().map_err(|error| error.to_string())?;

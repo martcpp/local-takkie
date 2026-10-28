@@ -5,7 +5,7 @@ use crate::dsp::{Biquad, Level, soft_limit};
 
 // Where speech should sit: about -20 dB, which leaves its peaks under full scale.
 const TARGET_DB: f32 = -20.0;
-const MOST_GAIN_DB: f32 = 30.0;
+const MOST_GAIN_DB: f32 = 20.0;
 const LEAST_GAIN_DB: f32 = -15.0;
 // Turning down has to be quicker than turning up, or a shout distorts.
 const UP_DB_PER_SECOND: f32 = 10.0;
@@ -18,7 +18,12 @@ const QUIETEST_SPEECH: f32 = 0.002;
 const CREEP: f32 = 0.002;
 // How fast the speech level follows a louder and a quieter frame.
 const RISE: f32 = 0.3;
-const FALL: f32 = 0.03;
+const FALL: f32 = 0.01;
+// Much quieter than the talker is an echo or the room, not a new talker. A
+// speaker in the same room comes back this way, and turning it up would keep
+// it going round. Only a quieter voice that lasts is followed.
+const ECHO_BELOW_DB: f32 = 10.0;
+const QUIETER_FOR: u32 = 150;
 const CEILING: f32 = 0.9;
 // Gain changes are spread over this many samples so they don't click.
 const RAMP: usize = 96;
@@ -32,6 +37,7 @@ pub struct Leveller {
     sample_rate: f32,
     background: Option<f32>,
     speech_db: Option<f32>,
+    quieter: u32,
     gain_db: f32,
     applied: f32,
 }
@@ -44,6 +50,7 @@ impl Leveller {
             sample_rate: sample_rate as f32,
             background: None,
             speech_db: None,
+            quieter: 0,
             gain_db: 0.0,
             applied: 1.0,
         }
@@ -111,6 +118,14 @@ impl Leveller {
 
     fn follow(&mut self, rms: f32, seconds: f32) {
         let now = 20.0 * rms.log10();
+        if self.speech_db.is_some_and(|was| now < was - ECHO_BELOW_DB) {
+            self.quieter += 1;
+            if self.quieter < QUIETER_FOR {
+                return;
+            }
+        } else {
+            self.quieter = 0;
+        }
         let speech = match self.speech_db {
             None => now,
             Some(was) if now > was => was + (now - was) * RISE,
@@ -355,6 +370,32 @@ mod tests {
         }
         levelled(&mut warm, word());
         assert!(warm.gain_db() > 5.0, "{}", warm.gain_db());
+    }
+
+    #[test]
+    fn an_echo_in_the_pauses_does_not_turn_the_gain_up() {
+        let mut leveller = Leveller::new(RATE);
+        levelled(&mut leveller, talk(8, 0.03, 0.0005));
+        let settled = leveller.gain_db();
+        levelled(&mut leveller, talk(2, 0.006, 0.0005));
+        assert!(
+            (leveller.gain_db() - settled).abs() < 0.5,
+            "{settled} dB became {} dB",
+            leveller.gain_db()
+        );
+    }
+
+    #[test]
+    fn a_talker_who_stays_quieter_is_followed() {
+        let mut leveller = Leveller::new(RATE);
+        levelled(&mut leveller, talk(8, 0.1, 0.0005));
+        let loud = leveller.gain_db();
+        levelled(&mut leveller, talk(12, 0.02, 0.0005));
+        assert!(
+            leveller.gain_db() > loud + 8.0,
+            "{loud} dB, then {} dB",
+            leveller.gain_db()
+        );
     }
 
     #[test]

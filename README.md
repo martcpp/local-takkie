@@ -62,6 +62,7 @@ green dot while they talk. Press `?` in the app for the list of keys:
 | `N` | Noise removal: off, normal or strong |
 | `L` | Even out a quiet or loud voice, on or off |
 | `C` | Clarity lift: off, normal or strong |
+| `R` | Room echo guard: don't play someone you can hear in the room |
 | `D` | Show the microphone and speaker in use |
 | `1`–`9`, `0` | Switch to channel 1 to 10 |
 | `P` | Set or clear this channel's passphrase |
@@ -82,7 +83,8 @@ the voice that carries the words. All three are on by default; `N`, `L` and
 `C` change them, and your choices are remembered. In a loud room, hold the
 microphone close to your mouth or use a headset: no setting makes up for a
 microphone that hears more room than voice. If the levels box says the
-microphone is too loud or too quiet, move back or closer.
+microphone is too loud or too quiet, move back or closer. What each stage
+does is in [docs/audio.md](docs/audio.md).
 
 **Private channels.** A channel is open by default: anyone on the same
 network can listen and talk. Press `P` and type a passphrase to make it
@@ -127,7 +129,7 @@ own fix:
 | What you hear | Why | What to do |
 |---|---|---|
 | The voice sounds far away and smeared | The talker's microphone hears the room more than the voice | Hold the microphone close to the mouth, or use a headset. Noise removal softens it, but distance is the cause |
-| A voice twice, a moment apart | You are in the same room as the talker: you hear the person, then the radio | Wear headphones, or mute that person for yourself (`X` in the terminal app, the speaker icon next to their name in the app) |
+| A voice twice, a moment apart | You are in the same room as the talker: you hear the person, then the radio | The room echo guard (on by default, `R`) stops playing a talker your microphone hears through the air, and marks them as in the room. If it misses one, wear headphones or mute that person for yourself (`X` in the terminal app, the speaker icon next to their name in the app) |
 | Your own voice comes back to you | The other side plays you on a loudspeaker with `half_duplex = false` in its settings | They switch half-duplex back on, or wear headphones |
 
 Half-duplex, the default, mutes your speaker while you talk, which is what

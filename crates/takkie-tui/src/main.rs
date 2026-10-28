@@ -76,6 +76,7 @@ fn main() -> ExitCode {
         noise_suppression: current.noise_suppression.into(),
         auto_level: current.auto_level,
         clarity: current.clarity.into(),
+        mute_nearby: current.mute_nearby,
         ..EngineConfig::default()
     }) {
         Ok(started) => started,
@@ -122,6 +123,7 @@ fn main() -> ExitCode {
         current.noise_suppression = last.noise_suppression.into();
         current.auto_level = last.auto_level;
         current.clarity = last.clarity.into();
+        current.mute_nearby = last.mute_nearby;
         if let Err(err) = settings::save(path, &current) {
             tracing::warn!("settings not saved: {err:#}");
             eprintln!("takkie: settings not saved: {err:#}");
