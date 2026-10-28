@@ -193,6 +193,7 @@ export const setBeeps = (on: boolean) => ask(engine.setBeeps(on))
 const NOISE = 'noise-suppression'
 const AUTO_LEVEL = 'auto-level'
 const CLARITY = 'clarity'
+const MUTE_NEARBY = 'mute-nearby'
 
 // The radio starts with its defaults, so what was chosen is set again.
 async function restoreVoice() {
@@ -208,6 +209,15 @@ async function restoreVoice() {
   if (clarity) {
     await ask(engine.setClarity(clarity))
   }
+  if (localStorage.getItem(MUTE_NEARBY) === 'no') {
+    await ask(engine.setMuteNearby(false))
+  }
+}
+
+/** Leaves people in the same room unplayed, or plays everyone. Remembered. */
+export async function setMuteNearby(on: boolean) {
+  localStorage.setItem(MUTE_NEARBY, on ? 'yes' : 'no')
+  await ask(engine.setMuteNearby(on))
 }
 
 /** How hard background noise is removed from the microphone. Remembered. */

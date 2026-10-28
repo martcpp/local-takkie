@@ -38,6 +38,7 @@ pub struct PeerView {
     seen_ms: u64,
     mismatch: bool,
     muted: bool,
+    nearby: bool,
 }
 
 impl PeerView {
@@ -52,6 +53,7 @@ impl PeerView {
             seen_ms: u64::try_from(seen.as_millis()).unwrap_or(u64::MAX),
             mismatch: peer.mismatch,
             muted: peer.muted,
+            nearby: peer.nearby,
         }
     }
 }
@@ -110,6 +112,7 @@ pub struct SnapshotView {
     auto_level: bool,
     clarity: &'static str,
     mic_advice: &'static str,
+    mute_nearby: bool,
     volume: f32,
     mic: LevelView,
     speaker: LevelView,
@@ -135,6 +138,7 @@ impl SnapshotView {
             auto_level: snapshot.auto_level,
             clarity: snapshot.clarity.name(),
             mic_advice: snapshot.mic_advice.name(),
+            mute_nearby: snapshot.mute_nearby,
             volume: snapshot.volume,
             mic: snapshot.mic.into(),
             speaker: snapshot.speaker.into(),
@@ -273,6 +277,7 @@ mod tests {
             last_seen: seen,
             mismatch: false,
             muted: true,
+            nearby: true,
         }
     }
 
@@ -288,6 +293,7 @@ mod tests {
             auto_level: true,
             clarity: Strength::Off,
             mic_advice: MicAdvice::Clipping,
+            mute_nearby: true,
             volume: 0.5,
             mic: Level {
                 rms: 0.1,
@@ -329,6 +335,7 @@ mod tests {
         assert_eq!(json["autoLevel"], true);
         assert_eq!(json["clarity"], "off");
         assert_eq!(json["micAdvice"], "clipping");
+        assert_eq!(json["muteNearby"], true);
         assert_eq!(json["bufferMs"], 60);
         assert_eq!(json["mic"]["peak"], 0.2_f32);
         let peer = &json["peers"][0];
@@ -338,6 +345,7 @@ mod tests {
         assert_eq!(peer["seenMs"], 1_500);
         assert_eq!(peer["talking"], true);
         assert_eq!(peer["muted"], true);
+        assert_eq!(peer["nearby"], true);
         assert_eq!(peer["mismatch"], false);
     }
 

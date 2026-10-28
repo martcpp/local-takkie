@@ -28,6 +28,7 @@
           <span class="name">{peer.name || peer.id}</span>
           {#if peer.talking}<span class="sr-only">is talking</span>{/if}
           {#if peer.mismatch}<span class="mark mismatch">other passphrase</span>{/if}
+          {#if peer.nearby}<span class="mark nearby" title="You can hear them through the air, so they aren't played">in the room</span>{/if}
           <span class="channel">ch {peer.channel}</span>
           <button
             class="mute"
@@ -124,6 +125,10 @@
 
   .mismatch {
     color: var(--danger);
+  }
+
+  .nearby {
+    color: var(--muted);
   }
 
   .channel {

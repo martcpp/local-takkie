@@ -15,6 +15,8 @@ export type Peer = {
   talking: boolean
   seenMs: number
   mismatch: boolean
+  /** Their voice reaches our microphone through the air. */
+  nearby: boolean
   muted: boolean
 }
 
@@ -30,6 +32,8 @@ export type Snapshot = {
   autoLevel: boolean
   clarity: Strength
   micAdvice: MicAdvice
+  /** People in the same room aren't played. */
+  muteNearby: boolean
   volume: number
   mic: Level
   speaker: Level
@@ -92,6 +96,7 @@ export const setNoiseSuppression = (level: Strength) =>
   invoke<void>('set_noise_suppression', { level })
 export const setAutoLevel = (on: boolean) => invoke<void>('set_auto_level', { on })
 export const setClarity = (level: Strength) => invoke<void>('set_clarity', { level })
+export const setMuteNearby = (on: boolean) => invoke<void>('set_mute_nearby', { on })
 export const setPeerMuted = (peer: string, muted: boolean) =>
   invoke<void>('set_peer_muted', { peer, muted })
 

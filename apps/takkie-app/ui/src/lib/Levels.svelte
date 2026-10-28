@@ -10,6 +10,7 @@
     setClarity,
     setHeadsetButton,
     setKeepScreenOn,
+    setMuteNearby,
     setMuted,
     setNoiseSuppression,
     setVolume,
@@ -93,6 +94,14 @@
       onclick={() => setClarity(nextStrength(snapshot.clarity))}
     >
       ✨ Clarity: {snapshot.clarity}
+    </button>
+    <button
+      aria-pressed={snapshot.muteNearby}
+      class:on={snapshot.muteNearby}
+      title="Doesn't play someone you can already hear in the room, so there is no echo"
+      onclick={() => setMuteNearby(!snapshot.muteNearby)}
+    >
+      {snapshot.muteNearby ? '🏠 Room echo guard on' : '🏠 Room echo guard off'}
     </button>
   </div>
   <details class="echo">

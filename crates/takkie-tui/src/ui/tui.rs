@@ -65,7 +65,7 @@ impl KeyReleases {
 }
 
 /// Every key the app answers to, as the help popup lists them.
-const BINDINGS: [(&str, &str); 15] = [
+const BINDINGS: [(&str, &str); 16] = [
     ("SPACE", "talk (hold or toggle, see the footer)"),
     ("T", "switch between hold and toggle"),
     ("M", "mute or unmute what you hear"),
@@ -76,6 +76,7 @@ const BINDINGS: [(&str, &str); 15] = [
     ("N", "noise removal: off, normal or strong"),
     ("L", "even out a quiet or loud voice, on or off"),
     ("C", "clarity lift: off, normal or strong"),
+    ("R", "don't play people in the same room, on or off"),
     ("D", "show the microphone and speaker in use"),
     ("1-9, 0", "switch to channel 1 to 10"),
     ("P", "set or clear this channel's passphrase"),
@@ -100,6 +101,7 @@ enum Key {
     Noise,
     AutoLevel,
     Clarity,
+    Room,
 }
 
 const MAX_SECRET: usize = 128;
@@ -173,6 +175,7 @@ fn key_action(code: KeyCode, kind: KeyEventKind) -> Option<Key> {
         (KeyCode::Char('n' | 'N'), _) => Some(Key::Noise),
         (KeyCode::Char('l' | 'L'), _) => Some(Key::AutoLevel),
         (KeyCode::Char('c' | 'C'), _) => Some(Key::Clarity),
+        (KeyCode::Char('r' | 'R'), _) => Some(Key::Room),
         (KeyCode::Char(digit @ '0'..='9'), _) => {
             let number = match digit {
                 '0' => 10,
@@ -480,6 +483,15 @@ fn run_app(
                     let clarity = snapshot.clarity.next();
                     engine.set_clarity(clarity);
                     app.log.push(format!("✨ Clarity {}", clarity.name()));
+                }
+                Some(Key::Room) => {
+                    let on = !snapshot.mute_nearby;
+                    engine.set_mute_nearby(on);
+                    app.log.push(if on {
+                        "🏠 People in the same room aren't played"
+                    } else {
+                        "🏠 Everyone is played, even in the same room"
+                    });
                 }
                 Some(Key::Channel(_)) | None => {}
             }
@@ -887,6 +899,14 @@ fn peer_line(peer: &PeerInfo, mine: ChannelId, now: Instant) -> Line<'static> {
             Style::default().fg(Color::Yellow),
         ),
         Span::styled(
+            if peer.nearby {
+                "  🏠 in the room"
+            } else {
+                ""
+            },
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled(
             if peer.mismatch {
                 "  🔐 other passphrase"
             } else {
@@ -999,6 +1019,7 @@ mod tests {
             last_seen: Instant::now(),
             mismatch: false,
             muted: false,
+            nearby: false,
         }
     }
 
@@ -1028,6 +1049,7 @@ mod tests {
         assert_eq!(press('n'), Some(Key::Noise));
         assert_eq!(press('L'), Some(Key::AutoLevel));
         assert_eq!(press('c'), Some(Key::Clarity));
+        assert_eq!(press('R'), Some(Key::Room));
         assert_eq!(key_action(KeyCode::Up, Press), Some(Key::Pick(-1)));
         assert_eq!(key_action(KeyCode::Down, Press), Some(Key::Pick(1)));
         assert_eq!(key_action(KeyCode::Down, Release), None);
@@ -1390,6 +1412,7 @@ mod tests {
             auto_level: true,
             clarity: Strength::Normal,
             mic_advice: MicAdvice::Fine,
+            mute_nearby: true,
             volume: 1.0,
             mic: Level::default(),
             speaker: Level::default(),

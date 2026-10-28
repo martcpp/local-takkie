@@ -64,6 +64,7 @@ fn node(
         Arc::clone(&transmitting),
         Arc::new(LevelMeter::default()),
         Arc::new(VoiceControls::raw()),
+        Arc::default(),
         tx_events,
     )?;
     let sender = Arc::new(PacketSender::new(

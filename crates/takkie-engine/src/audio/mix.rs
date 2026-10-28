@@ -17,6 +17,7 @@ use takkie_core::{PeerId, Seq};
 
 use super::codec::{CodecError, VoiceDecoder};
 use super::config::PREFERRED_RATE;
+use super::earshot::{Earshot, Heard, MicTap, Nearby};
 use super::io::AudioSink;
 use super::resample::{FRAME, ResampleError, Resampler};
 use super::tx::LevelMeter;
@@ -48,6 +49,8 @@ struct Talker {
     jitter: JitterBuffer<Vec<u8>>,
     decoder: VoiceDecoder,
     leveller: Leveller,
+    heard: Heard,
+    nearby: Nearby,
     concealed: u32,
     talking: bool,
     end: Option<Seq>,
@@ -113,6 +116,7 @@ pub struct MixControls {
     half_duplex: AtomicBool,
     beeps: AtomicBool,
     even_voices: AtomicBool,
+    mute_nearby: AtomicBool,
     muted_peers: ArcSwap<Vec<PeerId>>,
 }
 
@@ -123,7 +127,8 @@ impl Default for MixControls {
             muted: AtomicBool::new(false),
             half_duplex: AtomicBool::new(true),
             beeps: AtomicBool::new(false),
-            even_voices: AtomicBool::new(true),
+            even_voices: AtomicBool::new(false),
+            mute_nearby: AtomicBool::new(true),
             muted_peers: ArcSwap::default(),
         }
     }
@@ -193,6 +198,18 @@ impl MixControls {
         self.even_voices.load(Relaxed)
     }
 
+    /// Stops playing a talker whose voice reaches our microphone through
+    /// the air, or plays everyone regardless.
+    pub fn set_mute_nearby(&self, on: bool) {
+        self.mute_nearby.store(on, Relaxed);
+    }
+
+    /// Whether talkers in the same room are left unplayed.
+    #[must_use]
+    pub fn mute_nearby(&self) -> bool {
+        self.mute_nearby.load(Relaxed)
+    }
+
     /// Leaves one sender out of the mix, or puts them back.
     pub fn set_peer_muted(&self, peer: PeerId, muted: bool) {
         self.muted_peers.rcu(|peers| {
@@ -224,6 +241,10 @@ pub struct MixShared {
     pub talking: Arc<ArcSwap<Vec<PeerId>>>,
     /// What goes to the speaker, after volume and mute.
     pub level: Arc<LevelMeter>,
+    /// What the microphone heard, from the tx thread.
+    pub tap: Arc<MicTap>,
+    /// Talkers in the same room, published by the mix thread.
+    pub nearby: Arc<ArcSwap<Vec<PeerId>>>,
 }
 
 /// Every sender's buffer and decoder, mixed one frame at a time.
@@ -238,7 +259,14 @@ pub struct Mixer {
     was_transmitting: bool,
     sounded: bool,
     burst: usize,
+    tap: Arc<MicTap>,
+    earshot: Earshot,
+    nearby: Arc<ArcSwap<Vec<PeerId>>>,
+    ticks: u32,
 }
+
+/// Ticks between two looks at who is in the room: one a second.
+const NEARBY_EVERY: u32 = 50;
 
 impl Mixer {
     /// A mixer with no senders yet, never transmitting.
@@ -270,6 +298,10 @@ impl Mixer {
             was_transmitting: false,
             sounded: false,
             burst: 1,
+            tap: shared.tap,
+            earshot: Earshot::default(),
+            nearby: shared.nearby,
+            ticks: 0,
         }
     }
 
@@ -319,6 +351,8 @@ impl Mixer {
                 jitter: JitterBuffer::with_config(timing(burst)),
                 decoder: VoiceDecoder::new()?,
                 leveller: Leveller::new(PREFERRED_RATE),
+                heard: Heard::default(),
+                nearby: Nearby::default(),
                 concealed: 0,
                 talking: false,
                 end: None,
@@ -371,6 +405,27 @@ impl Mixer {
         std::mem::take(&mut self.sounded)
     }
 
+    // Once a second: who among the talkers can our microphone hear through
+    // the air? Publishes the list when it changes.
+    fn look_around(&mut self) {
+        self.ticks = self.ticks.wrapping_add(1);
+        if !self.ticks.is_multiple_of(NEARBY_EVERY) {
+            return;
+        }
+        let mut here = Vec::new();
+        for (id, talker) in &mut self.talkers {
+            let lead = self.earshot.compare(&talker.heard, &self.tap);
+            if talker.nearby.judge(lead) {
+                here.push(*id);
+            }
+        }
+        here.sort();
+        if **self.nearby.load() != here {
+            tracing::info!(count = here.len(), "talkers in the same room changed");
+            self.nearby.store(Arc::new(here));
+        }
+    }
+
     /// Mixes the next 20 ms from every sender into `out`, covering lost
     /// frames with FEC when the next packet is here and concealment if not,
     /// then applies volume, mute, half-duplex, the beeps and the limiter.
@@ -380,6 +435,7 @@ impl Mixer {
         let counters = &self.counters;
         let muted_peers = self.controls.muted_peers.load();
         let even_voices = self.controls.even_voices();
+        let mute_nearby = self.controls.mute_nearby();
         let mut ended = false;
         for (
             id,
@@ -387,6 +443,8 @@ impl Mixer {
                 jitter,
                 decoder,
                 leveller,
+                heard,
+                nearby,
                 concealed,
                 talking,
                 end,
@@ -395,7 +453,7 @@ impl Mixer {
             },
         ) in &mut self.talkers
         {
-            let audible = !muted_peers.contains(id);
+            let audible = !muted_peers.contains(id) && !(mute_nearby && nearby.here());
             if std::mem::take(over) {
                 ended |= audible;
             }
@@ -427,6 +485,9 @@ impl Mixer {
                 }
                 Playout::Plc { seq } => (seq, conceal(decoder, concealed, frame, counters)),
             };
+            if played {
+                heard.push(frame, now);
+            }
             if !played {
                 *talking = false;
             } else if audible {
@@ -457,6 +518,7 @@ impl Mixer {
             self.beep = None;
         }
         soft_limit(out);
+        self.look_around();
 
         // Armed after mixing, so a beep starts on the frame after its cause.
         if self.controls.beeps() {
@@ -915,8 +977,13 @@ mod tests {
 
     #[test]
     fn a_quiet_sender_and_a_loud_one_play_equally_loud() {
-        let quiet = last_word(&mut Mixer::new(), &[(1, 0.02)], 12);
-        let loud = last_word(&mut Mixer::new(), &[(2, 0.5)], 12);
+        let evening = || {
+            let mixer = Mixer::new();
+            mixer.controls().set_even_voices(true);
+            mixer
+        };
+        let quiet = last_word(&mut evening(), &[(1, 0.02)], 12);
+        let loud = last_word(&mut evening(), &[(2, 0.5)], 12);
         assert!(
             (quiet - loud).abs() < 3.0,
             "quiet {quiet} dB, loud {loud} dB"
@@ -925,9 +992,8 @@ mod tests {
     }
 
     #[test]
-    fn voices_play_as_sent_when_evening_is_off() {
+    fn voices_play_as_sent_unless_evening_is_on() {
         let mut mixer = Mixer::new();
-        mixer.controls().set_even_voices(false);
         let quiet = last_word(&mut mixer, &[(1, 0.02)], 12);
         assert!((quiet + 37.0).abs() < 2.0, "{quiet} dB");
     }
@@ -935,6 +1001,7 @@ mod tests {
     #[test]
     fn two_evened_voices_at_full_volume_stay_inside_full_scale() {
         let mut mixer = Mixer::new();
+        mixer.controls().set_even_voices(true);
         mixer.controls().set_volume(2.0);
         let t0 = Instant::now();
         let (a, b) = (words(0.02, 12), words(0.5, 12));
@@ -949,6 +1016,101 @@ mod tests {
         }
         assert!(loudest <= 1.0, "{loudest}");
         assert!(loudest > 0.3, "{loudest}");
+    }
+
+    // Noisy bursts with gaps, a little like syllables.
+    fn syllables(seconds: usize) -> Vec<f32> {
+        let mut state = 0x1357_9BDF_u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        let mut out = Vec::new();
+        let mut low = 0.0;
+        while out.len() < 48_000 * seconds {
+            let burst = 4_000 + (next() % 9_000) as usize;
+            for i in 0..burst {
+                let white = (next() as f32 / u32::MAX as f32 - 0.5) * 2.0;
+                low = 0.9 * low + 0.1 * white;
+                let shape = (std::f32::consts::PI * i as f32 / burst as f32).sin();
+                out.push(0.15 * shape * (low * 3.0 + 0.3 * white));
+            }
+            out.extend(std::iter::repeat_n(0.0, 1_500 + (next() % 6_000) as usize));
+        }
+        out.truncate(48_000 * seconds);
+        out
+    }
+
+    // A talker in the same room: our microphone hears each frame 160 ms
+    // before its packet arrives. Returns the peers found in the room and the
+    // level played over the last second.
+    fn same_room(mute_nearby: bool) -> (Vec<PeerId>, f32) {
+        let shared = MixShared::default();
+        shared.controls.set_mute_nearby(mute_nearby);
+        let (tap, nearby) = (Arc::clone(&shared.tap), Arc::clone(&shared.nearby));
+        let mut mixer = Mixer::with_shared(shared);
+        let voice = syllables(8);
+        let mut encoder = VoiceEncoder::new().unwrap();
+        let frames: Vec<&[f32]> = voice
+            .as_chunks::<FRAME>()
+            .0
+            .iter()
+            .map(|frame| frame.as_slice())
+            .collect();
+        let t0 = Instant::now();
+        let mut out = vec![0.0; FRAME];
+        let mut played = Vec::new();
+        for (index, frame) in frames.iter().enumerate() {
+            let now = t0 + Duration::from_millis(20) * index as u32;
+            let through_air: Vec<f32> = frames.get(index + 8).map_or(vec![0.0; FRAME], |ahead| {
+                ahead.iter().map(|s| s * 0.3).collect()
+            });
+            tap.push(&through_air, now);
+            let packet = encoder.encode(frame).unwrap().to_vec();
+            mixer.receive(rx(1, index, &packet), now).unwrap();
+            mixer.tick(now, &mut out);
+            played.extend_from_slice(&out);
+        }
+        let last_second = &played[played.len() - 48_000..];
+        (nearby.load().to_vec(), rms(last_second))
+    }
+
+    #[test]
+    fn a_talker_in_the_same_room_stops_being_played() {
+        let (here, level) = same_room(true);
+        assert_eq!(here, [PeerId::new(1)]);
+        assert!(level < 1e-4, "still playing at {level}");
+    }
+
+    #[test]
+    fn with_the_guard_off_a_talker_in_the_room_is_still_played() {
+        let (here, level) = same_room(false);
+        assert_eq!(here, [PeerId::new(1)]);
+        assert!(level > 0.01, "{level}");
+    }
+
+    #[test]
+    fn a_talker_elsewhere_is_never_taken_for_one_in_the_room() {
+        let shared = MixShared::default();
+        let (tap, nearby) = (Arc::clone(&shared.tap), Arc::clone(&shared.nearby));
+        let mut mixer = Mixer::with_shared(shared);
+        let voice = syllables(8);
+        let mut encoder = VoiceEncoder::new().unwrap();
+        let t0 = Instant::now();
+        let mut out = vec![0.0; FRAME];
+        for (index, frame) in voice.as_chunks::<FRAME>().0.iter().enumerate() {
+            let now = t0 + Duration::from_millis(20) * index as u32;
+            // Our own speaker playing them, a little after it was mixed.
+            let behind = index.saturating_sub(4) * FRAME;
+            let speaker: Vec<f32> = voice[behind..behind + FRAME].to_vec();
+            tap.push(&speaker, now);
+            let packet = encoder.encode(frame).unwrap().to_vec();
+            mixer.receive(rx(1, index, &packet), now).unwrap();
+            mixer.tick(now, &mut out);
+        }
+        assert!(nearby.load().is_empty());
     }
 
     #[test]

@@ -16,6 +16,7 @@ mdns-sd = "0.21"
 nnnoiseless = { version = "0.5", default-features = false }
 opus = "0.4"
 rtrb = "0.4"
+realfft = "3.5"
 rubato = "5.0.1"
 socket2 = "0.6"
 takkie-core = { workspace = true }
