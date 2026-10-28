@@ -45,9 +45,10 @@ Per talker, in the mixer (`crates/takkie-engine/src/audio/mix.rs`):
 | 1 | Jitter buffer | Holds packets about 60 ms to put them in order |
 | 2 | Opus decoder | A lost packet is rebuilt from the next one's error correction, or guessed when that is lost too |
 | 3 | Even voices | The same leveller as on the sending side, for people on an older version. Off by default: with two devices in one room it can turn up the other speaker's echo |
-| 4 | Mix | All talkers are added together |
-| 5 | Volume | 0 to 200% |
-| 6 | Beeps and limiter | The limiter keeps two loud talkers, or 200%, inside full scale |
+| 4 | Room echo guard | A talker whose voice reaches our microphone through the air before the radio plays it is in the same room, so they aren't played. Found by comparing their voice with the microphone (GCC-PHAT); they are played again a few seconds after they leave. On by default |
+| 5 | Mix | All talkers are added together |
+| 6 | Volume | 0 to 200% |
+| 7 | Beeps and limiter | The limiter keeps two loud talkers, or 200%, inside full scale |
 
 ## Getting a clear voice in a loud room
 
@@ -62,9 +63,9 @@ In rough order of how much each helps:
    talkers.
 4. **Use clarity** when the listener is in noise too. Strong is for a small
    speaker in a loud room; it can sound sharp on good headphones.
-5. **Listeners in the same room as the talker should wear headphones,** or
-   mute that person. Otherwise they hear the voice twice. See
-   Troubleshooting in the README.
+5. **Leave the room echo guard on.** It stops a phone next to the talker
+   from playing them a moment late. If it misses someone, wear headphones
+   or mute that person. See Troubleshooting in the README.
 
 ## What isn't there
 
