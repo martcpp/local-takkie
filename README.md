@@ -82,7 +82,8 @@ the voice that carries the words. All three are on by default; `N`, `L` and
 `C` change them, and your choices are remembered. In a loud room, hold the
 microphone close to your mouth or use a headset: no setting makes up for a
 microphone that hears more room than voice. If the levels box says the
-microphone is too loud or too quiet, move back or closer.
+microphone is too loud or too quiet, move back or closer. What each stage
+does is in [docs/audio.md](docs/audio.md).
 
 **Private channels.** A channel is open by default: anyone on the same
 network can listen and talk. Press `P` and type a passphrase to make it

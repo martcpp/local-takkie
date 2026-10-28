@@ -123,7 +123,7 @@ impl Default for MixControls {
             muted: AtomicBool::new(false),
             half_duplex: AtomicBool::new(true),
             beeps: AtomicBool::new(false),
-            even_voices: AtomicBool::new(true),
+            even_voices: AtomicBool::new(false),
             muted_peers: ArcSwap::default(),
         }
     }
@@ -915,8 +915,13 @@ mod tests {
 
     #[test]
     fn a_quiet_sender_and_a_loud_one_play_equally_loud() {
-        let quiet = last_word(&mut Mixer::new(), &[(1, 0.02)], 12);
-        let loud = last_word(&mut Mixer::new(), &[(2, 0.5)], 12);
+        let evening = || {
+            let mixer = Mixer::new();
+            mixer.controls().set_even_voices(true);
+            mixer
+        };
+        let quiet = last_word(&mut evening(), &[(1, 0.02)], 12);
+        let loud = last_word(&mut evening(), &[(2, 0.5)], 12);
         assert!(
             (quiet - loud).abs() < 3.0,
             "quiet {quiet} dB, loud {loud} dB"
@@ -925,9 +930,8 @@ mod tests {
     }
 
     #[test]
-    fn voices_play_as_sent_when_evening_is_off() {
+    fn voices_play_as_sent_unless_evening_is_on() {
         let mut mixer = Mixer::new();
-        mixer.controls().set_even_voices(false);
         let quiet = last_word(&mut mixer, &[(1, 0.02)], 12);
         assert!((quiet + 37.0).abs() < 2.0, "{quiet} dB");
     }
@@ -935,6 +939,7 @@ mod tests {
     #[test]
     fn two_evened_voices_at_full_volume_stay_inside_full_scale() {
         let mut mixer = Mixer::new();
+        mixer.controls().set_even_voices(true);
         mixer.controls().set_volume(2.0);
         let t0 = Instant::now();
         let (a, b) = (words(0.02, 12), words(0.5, 12));
