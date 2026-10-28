@@ -75,6 +75,10 @@ cargo xtask gui
 It type-checks, tests and builds the frontend, then runs clippy and the
 Rust tests for the app.
 
+Screens follow the HANDSET design in
+[docs/design/handset.md](docs/design/handset.md): its colours, type and
+parts, and a picture of each screen.
+
 ## The Android app
 
 The same app builds for Android (8.0 and newer). The Android project is in

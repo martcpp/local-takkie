@@ -157,7 +157,8 @@ cargo xtask ci
 ```
 
 `cargo xtask fmt` formats everything. The full workflow and code rules are in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md), and how the apps look is in
+[docs/design/handset.md](docs/design/handset.md).
 
 ## License
 
