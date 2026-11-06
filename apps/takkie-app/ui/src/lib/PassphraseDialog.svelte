@@ -74,14 +74,14 @@
   dialog {
     width: min(24rem, calc(100vw - 2rem));
     padding: 1rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: 0.75rem;
-    background: var(--bg);
+    background: var(--graphite-900);
     color: var(--text);
   }
 
   dialog::backdrop {
-    background: rgb(0 0 0 / 0.5);
+    background: color-mix(in srgb, var(--graphite-900) 75%, transparent);
   }
 
   h2 {
@@ -103,8 +103,8 @@
     padding: 0.5rem 0.625rem;
     font: inherit;
     color: inherit;
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--graphite-800);
+    border: 1px solid var(--line);
     border-radius: 0.5rem;
   }
 
@@ -114,7 +114,7 @@
   }
 
   .hint.warn {
-    color: var(--warning);
+    color: var(--caution);
   }
 
   .actions {
@@ -125,8 +125,8 @@
   }
 
   .primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
+    background: var(--lcd);
+    border-color: var(--lcd);
+    color: var(--lcd-ink);
   }
 </style>

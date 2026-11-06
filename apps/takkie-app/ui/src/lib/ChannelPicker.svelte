@@ -26,7 +26,7 @@
         aria-label={`Channel ${channel}, ${here(channel)} others`}
         onclick={() => switchChannel(channel)}
       >
-        <span class="number">{channel}</span>
+        <span class="number mono">{channel}</span>
         <span class="count">{here(channel) || ''}</span>
       </button>
     {/each}
@@ -56,9 +56,9 @@
   }
 
   .channel.current {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
+    background: var(--lcd);
+    border-color: var(--lcd);
+    color: var(--lcd-ink);
   }
 
   .count {
@@ -76,7 +76,7 @@
   }
 
   .lock.private {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--lcd);
+    color: var(--lcd);
   }
 </style>

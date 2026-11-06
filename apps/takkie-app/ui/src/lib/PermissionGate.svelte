@@ -35,9 +35,9 @@
 <style>
   .gate {
     padding: 1rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: 0.75rem;
-    background: var(--surface);
+    background: var(--graphite-800);
     display: grid;
     gap: 0.75rem;
   }
@@ -55,14 +55,14 @@
   }
 
   .refused {
-    color: var(--warning);
+    color: var(--caution);
   }
 
   .primary {
     min-height: 3rem;
     font-weight: 600;
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
+    background: var(--lcd);
+    border-color: var(--lcd);
+    color: var(--lcd-ink);
   }
 </style>

@@ -99,8 +99,8 @@
     place-content: center;
     gap: 0.25rem;
     border-radius: 1.25rem;
-    border: 2px solid var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    border: 2px solid var(--line);
+    background: var(--graphite-700);
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
@@ -108,14 +108,14 @@
   }
 
   .ptt.live {
-    background: var(--danger);
-    border-color: var(--danger);
-    color: var(--on-accent);
+    background: var(--signal);
+    border-color: var(--signal);
+    color: var(--graphite-900);
   }
 
   .ptt:disabled {
-    border-color: var(--border);
-    background: var(--surface);
+    border-color: var(--line);
+    background: var(--graphite-800);
   }
 
   .label {

@@ -70,7 +70,7 @@
         {headset.talks ? '🎧 Headset button talks' : '🎧 Headset button off'}
       </button>
     {/if}
-    <span class="buffer">Buffer {snapshot.bufferMs} ms</span>
+    <span class="buffer mono">Buffer {snapshot.bufferMs} ms</span>
   </div>
   <div class="switches" role="group" aria-label="Your voice">
     <button
@@ -140,7 +140,7 @@
 
   .warning {
     margin: 0.375rem 0 0;
-    color: var(--warning, #b45309);
+    color: var(--caution);
     font-size: 0.875rem;
   }
 
@@ -177,7 +177,7 @@
   .volume input {
     width: 100%;
     min-height: 2rem;
-    accent-color: var(--accent);
+    accent-color: var(--lcd);
   }
 
   output {
@@ -194,8 +194,8 @@
   }
 
   .switches button.on {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--lcd);
+    color: var(--lcd);
   }
 
   .buffer {

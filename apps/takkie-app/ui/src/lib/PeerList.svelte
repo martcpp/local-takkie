@@ -29,7 +29,7 @@
           {#if peer.talking}<span class="sr-only">is talking</span>{/if}
           {#if peer.mismatch}<span class="mark mismatch">other passphrase</span>{/if}
           {#if peer.nearby}<span class="mark nearby" title="You can hear them through the air, so they aren't played">in the room</span>{/if}
-          <span class="channel">ch {peer.channel}</span>
+          <span class="channel mono">ch {peer.channel}</span>
           <button
             class="mute"
             class:on={peer.muted}
@@ -59,7 +59,7 @@
   }
 
   .offline {
-    color: var(--warning);
+    color: var(--caution);
   }
 
   ul {
@@ -76,7 +76,7 @@
     gap: 0.5rem;
     padding: 0.375rem 0.5rem 0.375rem 0.625rem;
     border-radius: 0.5rem;
-    background: var(--surface);
+    background: var(--graphite-800);
   }
 
   li.elsewhere {
@@ -92,9 +92,9 @@
   }
 
   .dot.talking {
-    border-color: var(--talking);
-    background: var(--talking);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--talking) 30%, transparent);
+    border-color: var(--receive);
+    background: var(--receive);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--receive) 30%, transparent);
   }
 
   .name {
@@ -120,11 +120,11 @@
   }
 
   .mute.on {
-    border-color: var(--warning);
+    border-color: var(--caution);
   }
 
   .mismatch {
-    color: var(--danger);
+    color: var(--caution);
   }
 
   .nearby {

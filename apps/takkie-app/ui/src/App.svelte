@@ -31,7 +31,7 @@
 
 <main>
   <header class="top">
-    <h1>local-takkie</h1>
+    <h1 class="label">local-takkie</h1>
     {#if app.snapshot}
       {@const status = channelState(app.snapshot)}
       <p class="status {status.kind}" role="status">{status.text}</p>
@@ -93,8 +93,8 @@
     bottom: 0;
     margin: 0 calc(-1 * var(--gutter));
     padding: 0.5rem var(--gutter) max(var(--gutter), env(safe-area-inset-bottom));
-    background: var(--bg);
-    border-top: 1px solid var(--border);
+    background: var(--graphite-900);
+    border-top: 1px solid var(--line);
   }
 
   .top {
@@ -116,8 +116,8 @@
     border-radius: 999px;
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--on-accent);
-    background: var(--talking);
+    color: var(--graphite-900);
+    background: var(--lcd);
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -125,21 +125,21 @@
   }
 
   .status.busy {
-    background: var(--warning);
+    background: var(--receive);
   }
 
   .status.transmitting {
-    background: var(--danger);
+    background: var(--signal);
   }
 
   .problem {
     padding: 0.75rem;
-    border: 1px solid var(--danger);
+    border: 1px solid var(--caution);
     border-radius: 0.75rem;
   }
 
   .problem h2 {
-    color: var(--danger);
+    color: var(--caution);
   }
 
   .problem p,

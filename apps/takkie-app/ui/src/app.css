@@ -1,35 +1,25 @@
+/* HANDSET: docs/design/handset.md. Dark only. */
 :root {
-  --bg: #f8fafc;
-  --surface: #eef2f6;
-  --border: #cbd5e1;
-  --text: #0f172a;
-  --muted: #5b6b80;
-  --accent: #0f766e;
-  --on-accent: #ffffff;
-  --talking: #15803d;
-  --warning: #a16207;
-  --danger: #b91c1c;
+  --graphite-900: #17191a;
+  --graphite-800: #1f2224;
+  --graphite-700: #2b2f31;
+  --line: #3a3f42;
+  --text: #eceae3;
+  --muted: #a3a7a2;
+  --lcd: #c9d1b7;
+  --lcd-ink: #1c2318;
+  --signal: #ff5b1f;
+  --receive: #8cc8ff;
+  --caution: #f2c14e;
 
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Archivo Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+
+  color-scheme: dark;
+  font-family: var(--font-body);
   line-height: 1.4;
-  background: var(--bg);
+  background: var(--graphite-900);
   color: var(--text);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f172a;
-    --surface: #1e293b;
-    --border: #334155;
-    --text: #f1f5f9;
-    --muted: #94a3b8;
-    --accent: #2dd4bf;
-    --on-accent: #042f2e;
-    --talking: #4ade80;
-    --warning: #facc15;
-    --danger: #f87171;
-  }
 }
 
 * {
@@ -43,21 +33,30 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+h2,
+.label {
+  font-stretch: 72%;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 h2 {
   margin: 0 0 0.5rem;
   font-size: 0.8125rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
 }
 
 button {
   font: inherit;
   color: inherit;
   padding: 0.375rem 0.75rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--graphite-800);
+  border: 1px solid var(--line);
   border-radius: 0.5rem;
   cursor: pointer;
 }
@@ -78,7 +77,7 @@ button:disabled {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--lcd);
   outline-offset: 2px;
 }
 

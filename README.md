@@ -162,4 +162,6 @@ cargo xtask ci
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). The app includes the fonts Archivo and
+JetBrains Mono, under the SIL Open Font License 1.1; their licence texts are
+in [apps/takkie-app/ui/public/fonts](apps/takkie-app/ui/public/fonts).

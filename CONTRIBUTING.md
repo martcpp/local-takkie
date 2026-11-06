@@ -77,7 +77,14 @@ Rust tests for the app.
 
 Screens follow the HANDSET design in
 [docs/design/handset.md](docs/design/handset.md): its colours, type and
-parts, and a picture of each screen.
+parts, and a picture of each screen. Colours come from the CSS variables in
+`ui/src/app.css`, never from a literal in a component.
+
+To look at the screens without the engine, run `npm --prefix ui run dev` and
+open <http://localhost:1420/preview.html?scene=rx>. A pretend engine drives
+them; the scenes (`rx`, `tx`, `standby`, `alone`, `offline`, `nomic`, `loud`,
+`room`) are in `ui/src/preview.ts`. Use a phone-sized window, or the
+browser's device mode, to see the phone layout.
 
 ## The Android app
 

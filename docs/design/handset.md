@@ -33,7 +33,8 @@ position or a shape always says the same thing.
 ## Type
 
 Both fonts ship inside the app (Takkie works without internet) and are
-under the SIL Open Font License.
+under the SIL Open Font License 1.1. Their licence texts ship with them,
+from `apps/takkie-app/ui/public/fonts/`.
 
 | Style | Font | Used for |
 |---|---|---|

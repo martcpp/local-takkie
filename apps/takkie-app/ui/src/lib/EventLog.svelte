@@ -9,7 +9,7 @@
 </script>
 
 <details>
-  <summary>
+  <summary class="label">
     Events
     {#if log.length > 0}<span class="latest">{log[log.length - 1].text}</span>{/if}
   </summary>
