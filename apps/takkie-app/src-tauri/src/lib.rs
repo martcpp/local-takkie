@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use takkie_engine::EngineConfig;
+use takkie_engine::net::address::local_networks;
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
 use tracing_subscriber::EnvFilter;
 
@@ -144,6 +145,7 @@ fn watch_surroundings(app: AppHandle) {
                 let radio = app.state::<Radio>();
                 radio.note_network(on_network);
                 radio.note_route(route);
+                radio.note_ip(local_networks().first().map(|net| net.ip));
                 // Android leaves open streams on the device they started on.
                 if routed.is_some() && route != routed {
                     tracing::info!(?route, "sound moved; reopening audio");

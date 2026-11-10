@@ -11,6 +11,9 @@
   --signal: #ff5b1f;
   --receive: #8cc8ff;
   --caution: #f2c14e;
+  /* Mixed from the above: the design's bars and edges are quieter than Line. */
+  --bar: color-mix(in srgb, var(--graphite-800) 50%, var(--graphite-900));
+  --edge: color-mix(in srgb, var(--line) 70%, var(--graphite-900));
 
   --font-body: 'Archivo Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
@@ -31,6 +34,13 @@ body {
   /* No rubber-band scrolling or grey flash on tap: it should feel like an app. */
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 h2,

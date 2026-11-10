@@ -1,5 +1,6 @@
 //! What the frontend is sent: plain data it can read as JSON.
 
+use std::net::Ipv4Addr;
 use std::time::Instant;
 
 use serde::Serialize;
@@ -68,9 +69,23 @@ pub struct Running {
     // "on a network".
     offline: bool,
     route: Option<Route>,
+    name: String,
+    port: u16,
+    ip: Option<Ipv4Addr>,
 }
 
 impl Running {
+    /// Records the name others see and the port we listen on.
+    pub fn note_station(&mut self, name: &str, port: u16) {
+        name.clone_into(&mut self.name);
+        self.port = port;
+    }
+
+    /// Records our address on the local network, if we have one.
+    pub fn note_ip(&mut self, ip: Option<Ipv4Addr>) {
+        self.ip = ip;
+    }
+
     /// Records whether this device is on a network other takkies can be on.
     pub fn note_network(&mut self, on_network: bool) {
         self.offline = !on_network;
@@ -103,6 +118,9 @@ impl Running {
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotView {
     id: String,
+    name: String,
+    /// What others type to add us by hand, `None` without a network.
+    address: Option<String>,
     channel: u8,
     private: bool,
     transmitting: bool,
@@ -129,6 +147,11 @@ impl SnapshotView {
     pub fn at(snapshot: &EngineSnapshot, running: &Running, now: Instant) -> Self {
         Self {
             id: snapshot.id.to_string(),
+            name: running.name.clone(),
+            address: running
+                .ip
+                .filter(|_| !running.offline)
+                .map(|ip| format!("{ip}:{}", running.port)),
             channel: snapshot.channel.get(),
             private: snapshot.private,
             transmitting: snapshot.transmitting,
@@ -321,12 +344,25 @@ mod tests {
         assert!(json["outputDevice"].is_null());
         assert_eq!(json["network"], true);
         assert!(json["route"].is_null());
+        assert_eq!(json["name"], "");
+        assert!(json["address"].is_null());
+        running.note_station("studio-pc", 50_211);
+        running.note_ip(Some(Ipv4Addr::new(192, 168, 1, 24)));
+        let named =
+            serde_json::to_value(SnapshotView::at(&snapshot(Vec::new()), &running, now)).unwrap();
+        assert_eq!(named["name"], "studio-pc");
+        assert_eq!(named["address"], "192.168.1.24:50211");
         running.note_route(Some(Route::Bluetooth));
         let routed = SnapshotView::at(&snapshot(Vec::new()), &running, now);
         assert_eq!(serde_json::to_value(&routed).unwrap()["route"], "bluetooth");
         running.note_network(false);
-        let offline = SnapshotView::at(&snapshot(Vec::new()), &running, now);
-        assert_eq!(serde_json::to_value(&offline).unwrap()["network"], false);
+        let offline =
+            serde_json::to_value(SnapshotView::at(&snapshot(Vec::new()), &running, now)).unwrap();
+        assert_eq!(offline["network"], false);
+        assert!(
+            offline["address"].is_null(),
+            "no address to give without a network"
+        );
         assert_eq!(json["id"], "00000000000000ab");
         assert_eq!(json["channel"], 4);
         assert_eq!(json["private"], true);

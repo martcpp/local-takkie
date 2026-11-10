@@ -30,6 +30,8 @@ const everyone = [
 
 const base: Snapshot = {
   id: '00ff',
+  name: 'studio-pc',
+  address: '192.168.1.24:50211',
   channel: 4,
   private: true,
   transmitting: false,
@@ -56,7 +58,7 @@ const scenes: Record<string, Partial<Snapshot>> = {
   tx: { transmitting: true, peers: everyone.map((one) => ({ ...one, talking: false })) },
   standby: { channel: 2, private: false },
   alone: { channel: 2, private: false, peers: [] },
-  offline: { network: false, peers: [] },
+  offline: { network: false, address: null, peers: [] },
   nomic: { inputDevice: null },
   loud: { micAdvice: 'clipping' },
   room: { peers: everyone.map((one) => (one.id === 'b2' ? { ...one, nearby: true } : one)) },

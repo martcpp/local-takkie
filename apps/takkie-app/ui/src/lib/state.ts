@@ -123,6 +123,14 @@ export function withEvent(state: AppState, event: EngineEvent, at: number): AppS
   return { ...state, snapshot, log }
 }
 
+/** The TX and RX lamps: we transmit; someone on our channel talks. */
+export function lamps(snapshot: Snapshot): { tx: boolean; rx: boolean } {
+  return {
+    tx: snapshot.transmitting,
+    rx: snapshot.peers.some((peer) => peer.talking && peer.channel === snapshot.channel),
+  }
+}
+
 export type ChannelState = { kind: 'free' | 'busy' | 'transmitting'; text: string }
 
 /** Whether the channel is free, busy or ours, and who is talking. */

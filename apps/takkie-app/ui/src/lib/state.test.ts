@@ -9,6 +9,7 @@ import {
   describe,
   initial,
   label,
+  lamps,
   meter,
   micGate,
   micWarning,
@@ -37,6 +38,8 @@ const peer = (id: string, name: string, channel = 2, extra: Partial<Peer> = {}):
 
 const snapshot = (peers: Peer[] = []): Snapshot => ({
   id: '00000000000000aa',
+  name: 'studio-pc',
+  address: '192.168.1.24:50211',
   channel: 2,
   private: false,
   transmitting: false,
@@ -232,6 +235,15 @@ suite('channel state', () => {
     expect(channelState(alone)).toEqual({ kind: 'transmitting', text: 'Transmitting' })
     const both = { ...snapshot([talking('01', 'Bedroom')]), transmitting: true }
     expect(channelState(both).text).toBe('Transmitting (Bedroom is talking too)')
+  })
+})
+
+suite('the lamps', () => {
+  test('TX is ours, RX is someone talking on our channel', () => {
+    const talker = peer('01', 'mira', 2, { talking: true })
+    expect(lamps(snapshot())).toEqual({ tx: false, rx: false })
+    expect(lamps({ ...snapshot([talker]), transmitting: true })).toEqual({ tx: true, rx: true })
+    expect(lamps(snapshot([{ ...talker, channel: 3 }])).rx).toBe(false)
   })
 })
 

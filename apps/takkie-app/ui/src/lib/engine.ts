@@ -22,6 +22,10 @@ export type Peer = {
 
 export type Snapshot = {
   id: string
+  /** Ours, as others see it. */
+  name: string
+  /** What others type to add us by hand; `null` without a network. */
+  address: string | null
   channel: number
   private: boolean
   transmitting: boolean

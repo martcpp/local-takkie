@@ -4,6 +4,7 @@
 
   import ChannelPicker from './lib/ChannelPicker.svelte'
   import EventLog from './lib/EventLog.svelte'
+  import Header from './lib/Header.svelte'
   import Levels from './lib/Levels.svelte'
   import PassphraseDialog from './lib/PassphraseDialog.svelte'
   import PeerList from './lib/PeerList.svelte'
@@ -29,14 +30,16 @@
   }}
 />
 
+<Header
+  snapshot={app.snapshot}
+  onSettings={() => document.getElementById('levels-title')?.scrollIntoView({ behavior: 'smooth' })}
+/>
+
 <main>
-  <header class="top">
-    <h1 class="label">local-takkie</h1>
-    {#if app.snapshot}
-      {@const status = channelState(app.snapshot)}
-      <p class="status {status.kind}" role="status">{status.text}</p>
-    {/if}
-  </header>
+  {#if app.snapshot}
+    {@const status = channelState(app.snapshot)}
+    <p class="status {status.kind}" role="status">{status.text}</p>
+  {/if}
 
   {#if app.problem}
     <section class="problem" role="alert">
@@ -75,12 +78,11 @@
 <style>
   main {
     --gutter: 0.75rem;
+    flex: 1;
+    width: 100%;
     max-width: 34rem;
-    min-height: 100vh;
-    min-height: 100dvh;
     margin: 0 auto;
-    padding: calc(var(--gutter) + env(safe-area-inset-top))
-      max(var(--gutter), env(safe-area-inset-right)) 0
+    padding: var(--gutter) max(var(--gutter), env(safe-area-inset-right)) 0
       max(var(--gutter), env(safe-area-inset-left));
     display: flex;
     flex-direction: column;
@@ -97,20 +99,8 @@
     border-top: 1px solid var(--line);
   }
 
-  .top {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-
-  h1 {
-    margin: 0;
-    font-size: 1.25rem;
-  }
-
   .status {
+    align-self: flex-start;
     margin: 0;
     padding: 0.25rem 0.75rem;
     border-radius: 999px;

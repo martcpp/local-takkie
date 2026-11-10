@@ -1,5 +1,6 @@
 //! What the frontend can ask the engine to do.
 
+use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
@@ -74,8 +75,12 @@ impl Radio {
             return Ok(false);
         }
         let noting = Arc::clone(&self.running);
+        let name = config.display_name.clone();
         let started = match Engine::start(config) {
             Ok((engine, events)) => {
+                if let Ok(mut running) = self.running.lock() {
+                    running.note_station(&name, engine.port());
+                }
                 let forwarding = std::thread::Builder::new()
                     .name("takkie-app-events".into())
                     .spawn(move || {
@@ -137,6 +142,13 @@ impl Radio {
     pub fn note_route(&self, route: Option<Route>) {
         if let Ok(mut running) = self.running.lock() {
             running.note_route(route);
+        }
+    }
+
+    /// Records our address on the local network.
+    pub fn note_ip(&self, ip: Option<Ipv4Addr>) {
+        if let Ok(mut running) = self.running.lock() {
+            running.note_ip(ip);
         }
     }
 
