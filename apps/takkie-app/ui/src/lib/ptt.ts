@@ -7,6 +7,8 @@ export type KeyTarget = {
   closest?: (selector: string) => unknown
 }
 
+import { NO_MIC } from './state'
+
 const TYPING = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
 
 /**
@@ -32,5 +34,5 @@ export function buzz(talking: boolean): number {
 
 /** Why talking isn't possible right now, or `null` when it is. */
 export function blocked(inputDevice: string | null): string | null {
-  return inputDevice === null ? 'The microphone isn’t running' : null
+  return inputDevice === null ? NO_MIC : null
 }

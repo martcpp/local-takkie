@@ -1,12 +1,15 @@
 import { describe as suite, expect, test } from 'vitest'
 
 import type { Access, Peer, Snapshot } from './engine'
+import { peer, snapshot } from './fixtures'
 import {
   MAX_LOG,
+  METER_SEGMENTS,
+  NO_MIC,
   NO_NETWORK,
   asStrength,
-  channelState,
   describe,
+  display,
   initial,
   label,
   lamps,
@@ -22,44 +25,6 @@ import {
   withProblem,
   withSnapshot,
 } from './state'
-
-const peer = (id: string, name: string, channel = 2, extra: Partial<Peer> = {}): Peer => ({
-  id,
-  name,
-  channel,
-  addr: '192.168.1.5:40000',
-  talking: false,
-  seenMs: 0,
-  mismatch: false,
-  nearby: false,
-  muted: false,
-  ...extra,
-})
-
-const snapshot = (peers: Peer[] = []): Snapshot => ({
-  id: '00000000000000aa',
-  name: 'studio-pc',
-  address: '192.168.1.24:50211',
-  channel: 2,
-  private: false,
-  transmitting: false,
-  muted: false,
-  beeps: false,
-  noiseSuppression: 'normal',
-  autoLevel: true,
-  clarity: 'normal',
-  micAdvice: 'fine',
-  muteNearby: true,
-  volume: 1,
-  mic: { rms: 0, peak: 0 },
-  speaker: { rms: 0, peak: 0 },
-  bufferMs: 0,
-  inputDevice: 'Microphone',
-  outputDevice: 'Speakers',
-  network: true,
-  route: null,
-  peers,
-})
 
 const running = (peers: Peer[] = []) => withSnapshot(initial(), snapshot(peers))
 
@@ -213,28 +178,78 @@ suite('microphone permission', () => {
   })
 })
 
-suite('channel state', () => {
+suite('the display', () => {
   const talking = (id: string, name: string, channel = 2) => peer(id, name, channel, { talking: true })
 
-  test('free when nobody on the channel talks', () => {
+  test('standby: nobody here, or a free channel', () => {
+    expect(display(snapshot())).toMatchObject({
+      state: 'standby',
+      here: 0,
+      line: 'Nobody else here yet',
+      warning: false,
+    })
     const quiet = snapshot([peer('01', 'Bedroom'), talking('02', 'Office', 5)])
-    expect(channelState(quiet)).toEqual({ kind: 'free', text: 'Free' })
+    expect(display(quiet)).toMatchObject({ here: 1, line: 'Channel 2 is free', warning: false })
   })
 
-  test('busy names who is talking', () => {
-    expect(channelState(snapshot([talking('01', 'Bedroom')]))).toEqual({
-      kind: 'busy',
-      text: 'Busy: Bedroom is talking',
+  test('receiving names who is talking on our channel', () => {
+    expect(display(snapshot([talking('01', 'Bedroom')]))).toMatchObject({
+      state: 'receiving',
+      line: 'Bedroom is talking',
     })
     const crowd = snapshot([talking('01', 'Bedroom'), talking('03', 'Attic'), talking('04', '')])
-    expect(channelState(crowd).text).toBe('Busy: Attic and 2 more are talking')
+    expect(display(crowd)).toMatchObject({ here: 3, line: 'Attic and 2 more are talking' })
   })
 
-  test('transmitting wins, and says who else talks', () => {
-    const alone = { ...snapshot(), transmitting: true }
-    expect(channelState(alone)).toEqual({ kind: 'transmitting', text: 'Transmitting' })
+  test('transmitting says so, and who else talks', () => {
+    expect(display({ ...snapshot(), transmitting: true })).toMatchObject({
+      state: 'transmitting',
+      line: 'You are talking on channel 2',
+    })
     const both = { ...snapshot([talking('01', 'Bedroom')]), transmitting: true }
-    expect(channelState(both).text).toBe('Transmitting (Bedroom is talking too)')
+    expect(display(both).line).toBe('You and Bedroom are talking')
+  })
+
+  test('a microphone problem while transmitting comes first', () => {
+    const loud: Snapshot = {
+      ...snapshot([talking('01', 'Bedroom')]),
+      transmitting: true,
+      micAdvice: 'clipping',
+    }
+    expect(display(loud)).toMatchObject({ state: 'transmitting', warning: true })
+    expect(display(loud).line).toContain('too loud')
+  })
+
+  test('standby shows the most important problem', () => {
+    const odd = peer('01', 'Bedroom', 2, { mismatch: true })
+    const all: Snapshot = {
+      ...snapshot([odd]),
+      network: false,
+      inputDevice: null,
+      micAdvice: 'quiet',
+    }
+    expect(display(all)).toMatchObject({ line: 'No Wi-Fi or local network', warning: true })
+    expect(display({ ...all, network: true }).line).toBe(NO_MIC)
+    expect(display({ ...all, network: true, inputDevice: 'Mic' }).line).toContain('too quiet')
+    expect(display({ ...all, network: true, inputDevice: 'Mic', micAdvice: 'fine' })).toMatchObject({
+      line: 'Bedroom uses a different passphrase',
+      warning: true,
+    })
+  })
+
+  test('someone talking hides a problem nobody needs to act on now', () => {
+    const odd = peer('01', 'Bedroom', 2, { mismatch: true })
+    expect(display(snapshot([odd, talking('02', 'Attic')]))).toMatchObject({
+      state: 'receiving',
+      warning: false,
+    })
+  })
+
+  test('the meter lights segments on the decibel scale', () => {
+    const level = (peak: number) => display({ ...snapshot(), mic: { rms: 0, peak } }).lit
+    expect(level(0)).toBe(0)
+    expect(level(1)).toBe(METER_SEGMENTS)
+    expect(level(0.1)).toBe(Math.round(METER_SEGMENTS * (2 / 3)))
   })
 })
 

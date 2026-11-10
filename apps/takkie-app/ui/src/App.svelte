@@ -3,6 +3,7 @@
   import { onMount } from 'svelte'
 
   import ChannelPicker from './lib/ChannelPicker.svelte'
+  import Display from './lib/Display.svelte'
   import EventLog from './lib/EventLog.svelte'
   import Header from './lib/Header.svelte'
   import Levels from './lib/Levels.svelte'
@@ -10,7 +11,7 @@
   import PeerList from './lib/PeerList.svelte'
   import PermissionGate from './lib/PermissionGate.svelte'
   import PttButton from './lib/PttButton.svelte'
-  import { channelState, micGate } from './lib/state'
+  import { micGate } from './lib/state'
   import { app, connect, shown, turnOn } from './lib/store.svelte'
 
   const version = getVersion()
@@ -36,11 +37,6 @@
 />
 
 <main>
-  {#if app.snapshot}
-    {@const status = channelState(app.snapshot)}
-    <p class="status {status.kind}" role="status">{status.text}</p>
-  {/if}
-
   {#if app.problem}
     <section class="problem" role="alert">
       <h2>The radio isn't running</h2>
@@ -48,6 +44,7 @@
       <button onclick={() => turnOn()}>Turn it on</button>
     </section>
   {:else if app.snapshot}
+    <Display snapshot={app.snapshot} onLock={() => passphrase?.open()} />
     <ChannelPicker snapshot={app.snapshot} onLock={() => passphrase?.open()} />
     <PeerList snapshot={app.snapshot} />
     <Levels snapshot={app.snapshot} />
@@ -97,29 +94,6 @@
     padding: 0.5rem var(--gutter) max(var(--gutter), env(safe-area-inset-bottom));
     background: var(--graphite-900);
     border-top: 1px solid var(--line);
-  }
-
-  .status {
-    align-self: flex-start;
-    margin: 0;
-    padding: 0.25rem 0.75rem;
-    border-radius: 999px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--graphite-900);
-    background: var(--lcd);
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .status.busy {
-    background: var(--receive);
-  }
-
-  .status.transmitting {
-    background: var(--signal);
   }
 
   .problem {

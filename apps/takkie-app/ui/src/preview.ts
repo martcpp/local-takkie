@@ -107,7 +107,7 @@ mockIPC(
 let tick = 0
 setInterval(() => {
   tick += 1
-  const voice = now.transmitting ? 0.25 + 0.2 * Math.abs(Math.sin(tick / 3)) : 0.01
+  const voice = now.transmitting ? 0.25 + 0.2 * Math.abs(Math.sin(tick / 3)) : 0.002
   void emit('engine-snapshot', { ...now, mic: { rms: voice / 3, peak: voice } })
 }, 100)
 

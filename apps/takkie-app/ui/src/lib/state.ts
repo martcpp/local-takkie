@@ -131,23 +131,67 @@ export function lamps(snapshot: Snapshot): { tx: boolean; rx: boolean } {
   }
 }
 
-export type ChannelState = { kind: 'free' | 'busy' | 'transmitting'; text: string }
+export type DisplayState = 'standby' | 'receiving' | 'transmitting'
 
-/** Whether the channel is free, busy or ours, and who is talking. */
-export function channelState(snapshot: Snapshot): ChannelState {
-  const talkers = ordered(snapshot.peers, snapshot.channel)
-    .filter((peer) => peer.talking && peer.channel === snapshot.channel)
-    .map((peer) => peer.name || peer.id)
-  const who =
-    talkers.length === 0
-      ? null
-      : talkers.length === 1
-        ? `${talkers[0]} is talking`
-        : `${talkers[0]} and ${talkers.length - 1} more are talking`
+export type Display = {
+  state: DisplayState
+  /** Others on our channel. */
+  here: number
+  /** What is happening, in one line. */
+  line: string
+  /** The line asks for something to be fixed. */
+  warning: boolean
+  /** Lit segments of the microphone meter. */
+  lit: number
+}
+
+export const METER_SEGMENTS = 24
+
+export const NO_MIC = 'The microphone isn’t running'
+
+/** What the display shows: one state, and the most useful line for it. */
+export function display(snapshot: Snapshot): Display {
+  const mine = ordered(snapshot.peers, snapshot.channel).filter(
+    (peer) => peer.channel === snapshot.channel,
+  )
+  const talkers = mine.filter((peer) => peer.talking).map((peer) => peer.name || peer.id)
+  const others = talkers.length === 1 ? talkers[0] : `${talkers[0]} and ${talkers.length - 1} more`
+  const base = { here: mine.length, lit: Math.round(meter(snapshot.mic.peak) * METER_SEGMENTS) }
+  const mic = micWarning(snapshot.micAdvice)
+  const show = (state: DisplayState, line: string, warning = false): Display => ({
+    ...base,
+    state,
+    line,
+    warning,
+  })
+
   if (snapshot.transmitting) {
-    return { kind: 'transmitting', text: who ? `Transmitting (${who} too)` : 'Transmitting' }
+    if (mic) {
+      return show('transmitting', mic, true)
+    }
+    return show(
+      'transmitting',
+      talkers.length > 0
+        ? `You and ${others} are talking`
+        : `You are talking on channel ${snapshot.channel}`,
+    )
   }
-  return who ? { kind: 'busy', text: `Busy: ${who}` } : { kind: 'free', text: 'Free' }
+  if (talkers.length > 0) {
+    return show('receiving', `${others} ${talkers.length === 1 ? 'is' : 'are'} talking`)
+  }
+  const mismatch = mine.find((peer) => peer.mismatch)
+  const problem = !snapshot.network
+    ? 'No Wi-Fi or local network'
+    : snapshot.inputDevice === null
+      ? NO_MIC
+      : (mic ?? (mismatch && `${mismatch.name || mismatch.id} uses a different passphrase`))
+  if (problem) {
+    return show('standby', problem, true)
+  }
+  return show(
+    'standby',
+    mine.length === 0 ? 'Nobody else here yet' : `Channel ${snapshot.channel} is free`,
+  )
 }
 
 /** A peak level as a meter position from 0 to 1, on a 60 dB scale. */

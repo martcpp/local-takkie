@@ -18,6 +18,7 @@
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^26.6.5",
+    "happy-dom": "^21.0.4",
     "svelte": "^5.57.0",
     "svelte-check": "^4.7.7",
     "typescript": "~6.0.2",
