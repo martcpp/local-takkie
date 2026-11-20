@@ -241,7 +241,7 @@ pub struct EventLog {
 
 impl EventLog {
     pub fn push(&mut self, text: impl AsRef<str>) {
-        let time = chrono::Local::now().format("%H:%M:%S").to_string();
+        let time = jiff::Zoned::now().strftime("%H:%M:%S").to_string();
         self.push_at(&time, text);
     }
 
@@ -1471,6 +1471,24 @@ mod tests {
         assert_eq!(lines.len(), MAX_EVENTS);
         assert!(lines[0].ends_with("] event 50"));
         assert!(lines[0].starts_with('['));
+    }
+
+    #[test]
+    fn a_logged_line_starts_with_the_time_of_day() {
+        let mut log = EventLog::default();
+        log.push("hello");
+        let line = log.lines().next().unwrap();
+        let (time, text) = line.strip_prefix('[').unwrap().split_once("] ").unwrap();
+        assert_eq!(text, "hello");
+        assert_eq!(time.len(), 8, "{time}");
+        assert!(
+            time.char_indices().all(|(i, c)| if i == 2 || i == 5 {
+                c == ':'
+            } else {
+                c.is_ascii_digit()
+            }),
+            "{time}"
+        );
     }
 
     #[test]
