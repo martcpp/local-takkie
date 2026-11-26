@@ -12,7 +12,7 @@ cpal = { version = "0.18.2", features = ["realtime"] }
 crossbeam-channel = { workspace = true }
 getrandom = "0.4"
 if-addrs = "0.15"
-mdns-sd = "0.21"
+mdns-sd = "0.22"
 nnnoiseless = { version = "0.5", default-features = false }
 opus = "0.4"
 rtrb = "0.4"
